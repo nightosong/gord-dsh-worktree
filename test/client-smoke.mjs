@@ -145,6 +145,24 @@ function findButton(node, label) {
   return undefined
 }
 
+/** Find the first node whose className contains `needle`. */
+function findByClass(node, needle) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findByClass(child, needle)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (typeof node.props?.className === 'string' && node.props.className.includes(needle)) return node
+  for (const child of node.children) {
+    const hit = findByClass(child, needle)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
 /** Find the first `<input>` whose placeholder matches. */
 function findInput(node, placeholder) {
   if (node === null || node === undefined || typeof node !== 'object') return undefined
@@ -260,12 +278,12 @@ root.plugin({
     })
     serviceCtx.provide('slots', {
       inject(name, factory) {
-        if (name === 'conversation.input.left') chipSpec = { name, factory }
+        if (name === 'conversation.input.dock') chipSpec = { name, factory }
         else sectionSpec = { name, factory }
         return factory()
       },
       register(spec, component) {
-        if (spec.name === 'conversation.input.left') {
+        if (spec.name === 'conversation.input.dock') {
           chipSpec = { ...chipSpec, spec }
           Chip = component
         } else {
@@ -428,12 +446,17 @@ const chipT = (key, params) => {
   return text
 }
 
-const renderChip = async (passes = 40) => {
+/** A blank New Session, as the `input.dock` owner passes it. */
+const blankSession = { id: 's1', cwd: '/tmp/demo/app', blank: true }
+
+const renderChip = async (passes = 40, session = blankSession) => {
   let tree
   for (let pass = 0; pass < passes; pass++) {
     dirty = false
     beginRender()
-    tree = resolve(Chip({ t: chipT, ctx: root }))
+    // Drive the registered component, not the inner chip: the blank-session
+    // gate lives in the registration, so bypassing it would test nothing.
+    tree = resolve(Chip({ session, onClose: () => {} }))
     for (const effect of pendingEffects.splice(0)) effect()
     for (let flush = 0; flush < 4; flush++) await new Promise((resolve) => setImmediate(resolve))
     if (!dirty) break
@@ -441,16 +464,23 @@ const renderChip = async (passes = 40) => {
   return tree
 }
 
-check('chip registers into the input row', chipSpec?.name === 'conversation.input.left', chipSpec?.name)
+check('chip registers above the composer card', chipSpec?.name === 'conversation.input.dock', chipSpec?.name)
 check('chip registers a component', typeof Chip === 'function')
 check('chip has an id', chipSpec?.spec?.id === 'worktree-location', JSON.stringify(chipSpec?.spec))
+
+// The resolve helper calls function components directly, so the gate is
+// exercised by invoking the registered component with each session shape.
+const asActive = resolve(Chip({ session: { id: 's1', cwd: '/tmp/demo/app', blank: false } }))
+check('chip hides once the session is no longer blank', asActive === null, JSON.stringify(asActive))
+const asMissing = resolve(Chip({ session: undefined }))
+check('chip hides when no session is addressed', asMissing === null, JSON.stringify(asMissing))
 
 const chip = await renderChip()
 const chipText = textsOf(chip).join(' ')
 check('chip names itself', chipText.includes('工作树'), chipText.slice(0, 200))
 
 process.stdout.write('\ncomposer chip: picker\n')
-const chipToggle = findButton(chip, '工作树')
+const chipToggle = findByClass(chip, 'gord-dsh-worktree-select')
 check('chip exposes a toggle', chipToggle !== undefined)
 chipToggle?.props.onClick()
 const chipOpen = await renderChip()
@@ -476,7 +506,7 @@ void chipAfterOpen
 process.stdout.write('\ncomposer chip: new worktree\n')
 // Picking a worktree collapses the popover, so it is reopened here rather than
 // reusing the previous tree.
-findButton(await renderChip(), '工作树')?.props.onClick()
+findByClass(await renderChip(), 'gord-dsh-worktree-select')?.props.onClick()
 const chipOpen2 = await renderChip()
 check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
 check('chip surfaces the branch list', textsOf(chipOpen2).join(' ').includes('origin/colleague/feature'), textsOf(chipOpen2).join(' ').slice(0, 300))

@@ -263,6 +263,13 @@ try {
   check('worktree_list tool surfaces localBranches', Array.isArray(listTool.localBranches))
   const listRendered = registered.get('worktree_list').output.render({}, listTool)
   check('worktree_list text names the branches', listRendered[0].text.includes('Branches:'), listRendered[0].text.slice(0, 120))
+
+  // Asked to "work on this in a new worktree" mid-conversation, the model has
+  // to know the session itself cannot move — otherwise it claims to have
+  // switched directories it never left.
+  const createTool = registered.get('worktree_create')
+  check('worktree_create explains the mid-session flow', createTool.description.includes('workdir'), createTool.description.slice(-200))
+  check('worktree_create says the session cannot be moved', createTool.description.includes('cannot be moved'), createTool.description.slice(-200))
 } finally {
   rmSync(scratch, { recursive: true, force: true })
 }
