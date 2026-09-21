@@ -37,7 +37,11 @@ A session's directory is fixed when it is created, so this control cannot retarg
 choosing a worktree registers it as a workspace and **opens a session there**, the same model the core
 workspace picker uses. It is therefore shown only while the addressed session is still blank.
 
-It sits on the Hero's own working-location row, beside the workspace and preset controls. That row is
+It sits on the Hero's own working-location row, beside the workspace and preset controls, and is styled
+to match them exactly: the same borderless 16px-radius pill, the same 13px/500 type, the same shared
+chevron and icon package. The icons come from `@deepseek-ai/dsh-client-ui-primitives`, which is
+declared in `dsh.client.inject` — a client plugin can only `require` a package the boot graph wires in.
+That row is
 laid out by the core plugin and all three `conversation.hero.*` slots are `single`, where a second
 occupant *shadows* the first instead of sitting beside it — so the control is rendered onto the row's
 element with `createPortal`, which is how the core plugins place themselves inside surfaces they do

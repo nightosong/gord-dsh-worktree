@@ -1,7 +1,7 @@
 {
   "name": "gord-dsh-worktree",
   "version": "0.1.0",
-  "description": "Git worktree management for DeepSeek Harness — isolate parallel work in its own directory and branch, from the agent or from Settings.",
+  "description": "Git worktree management for DeepSeek Harness \u2014 isolate parallel work in its own directory and branch, from the agent or from Settings.",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -31,6 +31,7 @@
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-settings"
       ],
       "immediately": false

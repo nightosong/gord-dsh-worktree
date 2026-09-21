@@ -220,13 +220,28 @@ const ReactDOM = {
     return node
   },
 }
+// The icon package the two neighbouring controls use; the stub only needs
+// something renderable, since the shipping markup is compared live.
+const icon = (props) => ({ type: 'Icon', props: props ?? {}, children: [] })
+const primitives = {
+  IconBranchOutline16: icon,
+  IconChevronDownOutline14: icon,
+}
 const bundle = registration.factory((name) => {
   if (name === 'react') return React
   if (name === 'react-dom') return ReactDOM
+  if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
   throw new Error(`unexpected require(${JSON.stringify(name)})`)
 })
 check('bundle exports apply', typeof bundle.apply === 'function')
 check('bundle declares the slots injection', Array.isArray(bundle.inject) && bundle.inject.includes('slots'), JSON.stringify(bundle.inject))
+// The icon package is resolved through the boot graph's inject list, so a
+// missing declaration means `require` throws at load and nothing renders.
+check(
+  'bundle declares the icon package it requires',
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-primitives'),
+  JSON.stringify(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).dsh.client.inject),
+)
 
 process.stdout.write('\nslots registration\n')
 let sectionSpec
@@ -489,7 +504,7 @@ const chip = await renderChip()
 const chipText = textsOf(chip).join(' ')
 // The control shows its value, like the workspace and preset controls beside
 // it; its name lives in the aria-label and tooltip rather than a prefix.
-check('chip is named for assistive tech', findByClass(chip, 'gord-dsh-worktree-select')?.props['aria-label'] === '工作树')
+check('chip is named for assistive tech', findByClass(chip, 'gord-dsh-worktree-seat')?.props['aria-label'] === '工作树')
 check('chip shows its value', chipText.includes('当前工作区'), chipText.slice(0, 200))
 // Closed by default, and defaulting to the project's own directory rather than
 // to a worktree: that is where a session starts unless one is asked for.
@@ -500,8 +515,13 @@ check('chip is collapsed until asked', findByClass(chip, 'gord-dsh-worktree-opti
 check('chip degrades to inline when no row is found', portalCalls.length === 0)
 
 process.stdout.write('\ncomposer chip: picker\n')
-const chipToggle = findByClass(chip, 'gord-dsh-worktree-select')
+const chipToggle = findByClass(chip, 'gord-dsh-worktree-seat')
 check('chip exposes a toggle', chipToggle !== undefined)
+// Parity with the two controls it sits between is a style contract, not a
+// cosmetic preference: borderless pill, 16px radius, 13px/500.
+check('chip is a borderless pill like its neighbours', chipToggle?.props.style.border === 'none' && chipToggle?.props.style.borderRadius === '16px', JSON.stringify({ border: chipToggle?.props.style.border, radius: chipToggle?.props.style.borderRadius }))
+check('chip label matches the neighbours\u2019 type', chipToggle?.props.style.fontSize === '13px' && chipToggle?.props.style.fontWeight === '500' && chipToggle?.props.style.lineHeight === '20px', JSON.stringify({ size: chipToggle?.props.style.fontSize, weight: chipToggle?.props.style.fontWeight }))
+check('chip carries the shared chevron', findByClass(chip, 'gord-dsh-worktree-chevron') !== undefined)
 chipToggle?.props.onClick()
 const chipOpen = await renderChip()
 check(
@@ -535,7 +555,7 @@ check('selecting collapses the menu', findByClass(chipAfterOpen, 'gord-dsh-workt
 process.stdout.write('\ncomposer chip: new worktree\n')
 // Picking a worktree collapses the popover, so it is reopened here rather than
 // reusing the previous tree.
-findByClass(await renderChip(), 'gord-dsh-worktree-select')?.props.onClick()
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
 const chipOpen2 = await renderChip()
 check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
 findButton(chipOpen2, '新建工作树')?.props.onClick()
