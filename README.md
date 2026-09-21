@@ -15,6 +15,16 @@ parallel work in its own directory and branch, from the agent or from Settings.
 - **No manual git** — creation is one atomic `git worktree add -b`, and the new directory defaults to a
   sibling `<repo>-worktrees/<branch>` so a worktree never lands inside the repository it came from.
 
+## Renamed from `dsh-worktree`
+
+The package id, module id, HTTP routes, and settings namespace are all
+`gord-dsh-worktree` now. If you installed under the old name:
+
+```sh
+dsh plugin --profile web remove dsh-worktree
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
+```
+
 ## Install
 
 ```sh

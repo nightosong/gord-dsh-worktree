@@ -15,6 +15,15 @@
 - **不用手敲 git** —— 创建是一条原子的 `git worktree add -b`；目录默认放在仓库同级的
   `<仓库名>-worktrees/<分支>`，绝不落在仓库内部。
 
+## 从 `dsh-worktree` 改名而来
+
+现在的包名、模块 id、HTTP 路由与设置命名空间统一为 `gord-dsh-worktree`。若你装的是旧名字：
+
+```sh
+dsh plugin --profile web remove dsh-worktree
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
+```
+
 ## 安装
 
 ```sh
