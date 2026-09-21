@@ -69,8 +69,26 @@ git logic both halves share.
 dsh plugin --profile web add /absolute/path/to/dsh-worktree
 ```
 
+A checkout installed by path resolves Node imports from its own directory, while DSH's packages resolve
+from the profile — so the host half cannot see `@deepseek-ai/dsh-tools` unless the checkout can reach
+them. Link the peers once in a local checkout (they are gitignored):
+
+```sh
+mkdir -p node_modules/@deepseek-ai
+SRC=$(dirname "$(readlink -f "$(which dsh)")")/../node_modules/@deepseek-ai
+for p in schemastery dsh-tools dsh-settings cordis; do
+  ln -sfn "$SRC/$p" "node_modules/@deepseek-ai/$p"
+done
+```
+
+An install from GitHub or npm inside a profile needs none of this: there the peers resolve through the
+profile's own `node_modules`, exactly as for every other plugin.
+
 Because the host half is mounted as a bundle layer, host-side changes need a `dsh web` restart; client
 changes reload with the GUI's normal module reload.
+
+`npm test` runs both smoke suites — the host one against a throwaway git repository, the client one
+against a minimal React runtime — with no test framework to install.
 
 ## License
 

@@ -63,7 +63,24 @@ dsh plugin --profile web add github:nightosong/dsh-worktree
 dsh plugin --profile web add /absolute/path/to/dsh-worktree
 ```
 
+按路径安装的检出会从自身目录解析 Node 依赖，而 DSH 的包从 profile 解析，因此 Host 半区看不到
+`@deepseek-ai/dsh-tools`，除非检出自己能找到它们。在本地检出里一次性链接（已被 gitignore）：
+
+```sh
+mkdir -p node_modules/@deepseek-ai
+SRC=$(dirname "$(readlink -f "$(which dsh)")")/../node_modules/@deepseek-ai
+for p in schemastery dsh-tools dsh-settings cordis; do
+  ln -sfn "$SRC/$p" "node_modules/@deepseek-ai/$p"
+done
+```
+
+从 GitHub 或 npm 装进 profile 则不需要这一步：那时 peer 依赖经由 profile 自己的 `node_modules`
+解析，和其它插件完全一致。
+
 Host 半区作为 bundle 层挂载，改动需要重启 `dsh web`；客户端改动随 GUI 的模块重载生效。
+
+`npm test` 会跑两个冒烟测试：Host 侧针对一个临时 git 仓库，客户端侧针对一个极简 React 运行时，
+无需安装任何测试框架。
 
 ## 许可证
 
