@@ -1,4 +1,4 @@
-# dsh-worktree
+# gord-dsh-worktree
 
 Git worktree management for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — isolate
 parallel work in its own directory and branch, from the agent or from Settings.
@@ -18,7 +18,7 @@ parallel work in its own directory and branch, from the agent or from Settings.
 ## Install
 
 ```sh
-dsh plugin --profile web add github:nightosong/dsh-worktree
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 ```
 
 Then restart `dsh web` (a reload is enough once the bundle is on the layer stack) and open
@@ -66,7 +66,7 @@ git logic both halves share.
 
 ```sh
 # install a checkout into a profile as a live dependency
-dsh plugin --profile web add /absolute/path/to/dsh-worktree
+dsh plugin --profile web add /absolute/path/to/gord-dsh-worktree
 ```
 
 A checkout installed by path resolves Node imports from its own directory, while DSH's packages resolve

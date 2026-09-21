@@ -1,5 +1,5 @@
 /**
- * dsh-worktree host-half smoke test — runs the operation layer against a real
+ * gord-dsh-worktree host-half smoke test — runs the operation layer against a real
  * throwaway repository. Executed with plain `node` so it can import the same
  * ESM modules the plugin ships; no test framework is required to prove the
  * guards behave.
@@ -33,7 +33,7 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-test-')))
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'gord-dsh-worktree-test-')))
 const repo = join(scratch, 'app')
 process.stdout.write(`scratch repository: ${repo}\n`)
 

@@ -1,5 +1,5 @@
 /**
- * dsh-worktree client-half smoke test.
+ * gord-dsh-worktree client-half smoke test.
  *
  * The browser bundle only exists inside DSH's module loader, so this test
  * recreates the two things it needs — `window.__ModuleLoader__.load` and a
@@ -171,7 +171,7 @@ const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 ;(0, eval)(readFileSync(clientPath, 'utf8'))
 
 check('bundle registers with the module loader', registration !== undefined)
-check('bundle keeps the package id', registration?.id === 'dsh-worktree', registration?.id)
+check('bundle keeps the package id', registration?.id === 'gord-dsh-worktree', registration?.id)
 
 const bundle = registration.factory((name) => {
   if (name === 'react') return React

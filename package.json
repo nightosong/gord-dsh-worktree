@@ -1,5 +1,5 @@
 {
-  "name": "dsh-worktree",
+  "name": "gord-dsh-worktree",
   "version": "0.1.0",
   "description": "Git worktree management for DeepSeek Harness — isolate parallel work in its own directory and branch, from the agent or from Settings.",
   "keywords": [
@@ -47,9 +47,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nightosong/dsh-worktree.git"
+    "url": "git+https://github.com/nightosong/gord-dsh-worktree.git"
   },
-  "homepage": "https://github.com/nightosong/dsh-worktree",
+  "homepage": "https://github.com/nightosong/gord-dsh-worktree",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-settings": "^0.1.5-rc.1",

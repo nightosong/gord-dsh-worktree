@@ -1,15 +1,15 @@
-# dsh-worktree bundle patch
+# gord-dsh-worktree bundle patch
 #
 # This file is the composition layer declared by `dsh.bundle.patch`. Installing
 # the package through the official CLI is enough — no profile file is edited by
 # hand:
 #
-#   dsh plugin --profile web add dsh-worktree
+#   dsh plugin --profile web add gord-dsh-worktree
 #   # or, before it is on npm:
-#   dsh plugin --profile web add github:nightosong/dsh-worktree
+#   dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 #
 # The command reconciles `dsh.profile.bundles` against what is actually
-# installed, sees this declaration, and appends `dsh-worktree` to the bundle
+# installed, sees this declaration, and appends `gord-dsh-worktree` to the bundle
 # stack. At profile boot the patch is merged, running the single `insert`
 # below — the same effect as writing the mount row into the profile's own
 # cordis.patch.yml, minus the manual edit.
@@ -18,5 +18,5 @@
 # cordis.patch.yml, delete that older row before switching to the bundle
 # channel: two rows would mount the same host plugin twice.
 - insert:
-    - id: dsh-worktree
-      name: 'dsh-worktree'
+    - id: gord-dsh-worktree
+      name: 'gord-dsh-worktree'

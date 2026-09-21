@@ -1,4 +1,4 @@
-# dsh-worktree
+# gord-dsh-worktree
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供 Git worktree 管理：把并行开发
 放进各自独立的目录与分支，Agent 和界面都能用。
@@ -18,7 +18,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add github:nightosong/dsh-worktree
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 ```
 
 然后重启 `dsh web`（bundle 进入层栈后重新加载即可），打开 **设置 → 工作树**。无需手工编辑任何 profile
@@ -60,7 +60,7 @@ dsh plugin --profile web add github:nightosong/dsh-worktree
 
 ```sh
 # 把本地检出作为实时依赖装进某个 profile
-dsh plugin --profile web add /absolute/path/to/dsh-worktree
+dsh plugin --profile web add /absolute/path/to/gord-dsh-worktree
 ```
 
 按路径安装的检出会从自身目录解析 Node 依赖，而 DSH 的包从 profile 解析，因此 Host 半区看不到
