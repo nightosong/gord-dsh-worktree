@@ -9,11 +9,33 @@ parallel work in its own directory and branch, from the agent or from Settings.
 
 - **Agent tools** — `worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`.
   An agent can branch off an isolated checkout for a task instead of doing everything in one working tree.
+- **Composer chip** — a *Worktree* control in the composer tool row: pick one of the repository's
+  worktrees to start a session in, or create a new one without leaving the conversation.
 - **Settings page** — *Settings → Worktrees*: the repository's worktrees with branch/HEAD and
   current/detached/locked/pruned badges, a create form (branch, base, directory), dry-run prune, and
   one-click **Open as workspace** so a new worktree becomes a sidebar workspace you can start a session in.
+- **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
+  checks that remote branch out from its real commit and sets it as upstream. If you name a base
+  anyway, the shadowed remote is reported rather than silently ignored.
 - **No manual git** — creation is one atomic `git worktree add -b`, and the new directory defaults to a
   sibling `<repo>-worktrees/<branch>` so a worktree never lands inside the repository it came from.
+
+## Picking up someone else's branch
+
+`worktree_create` with `branch: colleague/feature` and **no** `base` starts from
+`origin/colleague/feature` and tracks it. This is the case that used to be quietly wrong: the branch
+did not exist locally, so git created a fresh empty branch of the same name off the current one and
+the caller believed they held the colleague's commits.
+
+An explicit `base` is still honoured — a deliberate *new branch from main* has to stay possible — but
+the result then carries `shadowedRemote` so the ambiguity is visible.
+
+## Working location in the composer
+
+A session's directory is fixed when it is created, so the chip cannot retarget a running session:
+picking a worktree registers it as a workspace and **opens a session there**, the same model the core
+workspace picker uses. The selectors the core composer already occupies are `single` slots, so this
+registers into `conversation.input.left` — a `list` slot in the same tool row.
 
 ## Renamed from `dsh-worktree`
 
@@ -41,8 +63,8 @@ Requires dsh `0.1.5-rc.1` or newer.
 
 | Tool | What it does |
 | ---- | ------------ |
-| `worktree_list` | Every worktree of a repository: path, branch, HEAD, and current/detached/locked/pruned state. |
-| `worktree_create` | Creates the directory and its branch in one command; checks out an existing branch instead of recreating it. |
+| `worktree_list` | Every worktree of a repository: path, branch, HEAD, and current/detached/locked/pruned state — plus every local and remote-tracking branch, which is what to consult before naming a base. |
+| `worktree_create` | Creates the directory and its branch in one command; checks out an existing branch instead of recreating it, and starts from a remote-tracking branch of the same name when only that exists. |
 | `worktree_status` | One worktree's branch, upstream line, and changed files. |
 | `worktree_remove` | Removes a worktree. Refuses when it holds uncommitted or untracked changes; `force` discards them on purpose. |
 | `worktree_prune` | Drops records of worktrees whose directories are gone. Deletes no files. |

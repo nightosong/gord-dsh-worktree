@@ -38,6 +38,8 @@ let cursor = 0
 let slots = []
 /** Effects scheduled by the current render, flushed after it returns. */
 let pendingEffects = []
+/** Cleanup returned by each effect, keyed by hook position. */
+let cleanups = {}
 /** Set when a setter runs during a render pass, to request another pass. */
 let dirty = false
 
@@ -62,8 +64,25 @@ const React = {
     }
     return [slots[index], set]
   },
-  useEffect(effect, _deps) {
-    pendingEffects.push(effect)
+  useEffect(effect, deps) {
+    // Deps are honoured: the chip keys its loader on `open`, and an
+    // unconditional flush would re-run it every pass and never settle. A
+    // cleanup belongs to its own effect and runs only when that effect is
+    // about to re-run — running it on every render would tear down the mount
+    // effect immediately and the component would never see its own fetch.
+    const index = cursor++
+    const previous = slots[index]
+    const changed = previous === undefined || deps === undefined || deps.some((dep, i) => !Object.is(dep, previous[i]))
+    if (!changed) return
+    slots[index] = deps
+    if (typeof cleanups[index] === 'function') {
+      cleanups[index]()
+      delete cleanups[index]
+    }
+    pendingEffects.push(() => {
+      const result = effect()
+      if (typeof result === 'function') cleanups[index] = result
+    })
   },
   useRef(initial) {
     const index = cursor++
@@ -184,6 +203,8 @@ check('bundle declares the slots injection', Array.isArray(bundle.inject) && bun
 process.stdout.write('\nslots registration\n')
 let sectionSpec
 let Section
+let chipSpec
+let Chip
 // A real cordis context, with both services provided by sibling plugin fibers —
 // the same topology the client shell uses. This is not decoration: reaching an
 // un-injected service as a property only throws when its provider is a sibling
@@ -191,6 +212,15 @@ let Section
 // the bug that blanked the Settings page.
 const root = new Context()
 const registeredDicts = []
+/** `sessions.create` calls the chip makes, in order. */
+const createdSessions = []
+/** Session ids the chip asked the controller to select. */
+const openedSessions = []
+/** Session list snapshot the fake `sessions` service answers with. */
+const sessionList = {
+  current: 's1',
+  byId: { s1: { id: 's1', cwd: '/tmp/demo/app', blank: true } },
+}
 root.plugin({
   name: 'test:services',
   apply(serviceCtx) {
@@ -200,17 +230,48 @@ root.plugin({
         return () => {}
       },
       bind(ns) {
-        return (key) => `${ns}:${key}`
+        // Resolve the real dictionary *and* interpolate, exactly as the locale
+        // service does: the slot's own wrapper supplies this translator to the
+        // component, so a non-interpolating stand-in would leave `{path}` and
+        // `{branch}` unexpanded and hide whether the component renders right.
+        return (key, params) => {
+          let text = bundle.DICT.zh[key] ?? `${ns}:${key}`
+          for (const [name, value] of Object.entries(params ?? {})) text = text.split(`{${name}}`).join(String(value))
+          return text
+        }
+      },
+    })
+    serviceCtx.provide('sessions', {
+      list: {
+        getSnapshot: () => sessionList,
+        subscribe: () => () => {},
+      },
+      // The real contract is `Promise<SessionId>` — a bare string. Returning a
+      // result object here is exactly the mistake that let a broken unwrap
+      // pass the suite while failing in the browser.
+      create: (opts) => {
+        const sessionId = `new-${createdSessions.length + 1}`
+        createdSessions.push({ cwd: opts.cwd, sessionId })
+        return Promise.resolve(sessionId)
+      },
+      open: (id) => {
+        openedSessions.push(id)
       },
     })
     serviceCtx.provide('slots', {
       inject(name, factory) {
-        sectionSpec = { name, factory }
+        if (name === 'conversation.input.left') chipSpec = { name, factory }
+        else sectionSpec = { name, factory }
         return factory()
       },
       register(spec, component) {
-        sectionSpec = { ...sectionSpec, spec }
-        Section = component
+        if (spec.name === 'conversation.input.left') {
+          chipSpec = { ...chipSpec, spec }
+          Chip = component
+        } else {
+          sectionSpec = { ...sectionSpec, spec }
+          Section = component
+        }
         return () => {}
       },
     })
@@ -233,7 +294,7 @@ check('dictionaries register under that namespace', registeredDicts.length === 1
 // Regression: the settings nav makes this call, and it is where the
 // un-injected `ctx.locale` used to throw and blank the whole page.
 const navLabel = sectionSpec?.spec?.label?.()
-check('section label resolves through the locale service', navLabel === 'gord-worktree:nav.label', String(navLabel))
+check('section label resolves through the locale service', navLabel === '工作树', String(navLabel))
 
 process.stdout.write('\nrender: initial load\n')
 
@@ -246,6 +307,8 @@ const listing = {
   dirty: true,
   isLinked: false,
   defaultParent: '/tmp/demo/app-worktrees',
+  branches: ['main', 'origin/main', 'origin/colleague/feature'],
+  localBranches: ['main'],
   worktrees: [
     { path: '/tmp/demo/app', branch: 'main', head: 'aaaaaaa', current: true, detached: false, locked: false, pruned: false },
     { path: '/tmp/demo/app-worktrees/feat', branch: 'worktree/feat', head: 'bbbbbbb', current: false, detached: false, locked: false, pruned: false },
@@ -254,16 +317,27 @@ const listing = {
 const calls = []
 globalThis.fetch = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
-  calls.push({ action, body: JSON.parse(options.body) })
+  // Parse once: `options.body` is the raw JSON string, so reading `.branch` off
+  // it directly would silently yield undefined.
+  const body = JSON.parse(options.body)
+  calls.push({ action, body })
   const payload =
     action === 'list'
       ? listing
       : action === 'create'
-        ? { ok: true, path: '/tmp/demo/app-worktrees/new', branch: 'worktree/new', workspace: { workspaceId: 'w1' } }
+        ? {
+            ok: true,
+            path: '/tmp/demo/app-worktrees/new',
+            branch: body.branch || 'worktree/new',
+            base: 'origin/colleague/feature',
+            pickedUpRemote: body.branch === 'colleague/feature' ? 'origin/colleague/feature' : undefined,
+            // NOTE: kept literal (not JSON-round-tripped) on purpose in the other probes.
+            workspace: { workspaceId: 'w1' },
+          }
         : action === 'remove'
-          ? { ok: true, removed: options.body.path, branch: 'worktree/feat', branchDeleted: true }
+          ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
           : action === 'adopt'
-            ? { ok: true, workspace: { workspaceId: 'w1', path: options.body.path, title: 'feat' } }
+            ? { ok: true, workspace: { workspaceId: 'w1', path: body.path, title: 'feat' } }
             : { ok: true, output: '' }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
 }
@@ -336,6 +410,94 @@ check('remove is not called before confirmation', !calls.some((call) => call.act
 const confirmRemove = findButton(confirming, '取消') !== undefined ? findButton(confirming, '删除') : undefined
 const submit = confirming.children.flatMap((child) => findButton(child, '删除') ?? []).filter((node) => node !== removeButton)[0]
 check('confirmation offers a submit', submit !== undefined || confirmRemove !== undefined)
+
+process.stdout.write('\ncomposer chip\n')
+// The chip is a second root component, mounted fresh, so the shared hook store
+// is cleared once here and then left alone — clearing it per render would reset
+// the chip's own state and it could never open.
+slots = []
+cleanups = {}
+// The chip is a second root component. The hook store here is indexed by
+// position rather than keyed by component, so it must be cleared between roots
+// — otherwise the chip would inherit the section's hook values.
+/** The chip's translator, bound to the plugin dictionary like the real one. */
+const chipT = (key, params) => {
+  const dict = bundle.DICT.zh
+  let text = dict[key] ?? key
+  for (const [name, value] of Object.entries(params ?? {})) text = text.split(`{${name}}`).join(String(value))
+  return text
+}
+
+const renderChip = async (passes = 40) => {
+  let tree
+  for (let pass = 0; pass < passes; pass++) {
+    dirty = false
+    beginRender()
+    tree = resolve(Chip({ t: chipT, ctx: root }))
+    for (const effect of pendingEffects.splice(0)) effect()
+    for (let flush = 0; flush < 4; flush++) await new Promise((resolve) => setImmediate(resolve))
+    if (!dirty) break
+  }
+  return tree
+}
+
+check('chip registers into the input row', chipSpec?.name === 'conversation.input.left', chipSpec?.name)
+check('chip registers a component', typeof Chip === 'function')
+check('chip has an id', chipSpec?.spec?.id === 'worktree-location', JSON.stringify(chipSpec?.spec))
+
+const chip = await renderChip()
+const chipText = textsOf(chip).join(' ')
+check('chip names itself', chipText.includes('工作树'), chipText.slice(0, 200))
+
+process.stdout.write('\ncomposer chip: picker\n')
+const chipToggle = findButton(chip, '工作树')
+check('chip exposes a toggle', chipToggle !== undefined)
+chipToggle?.props.onClick()
+const chipOpen = await renderChip()
+check(
+  'opening the chip lists the session repository',
+  calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
+  JSON.stringify(calls.map((c) => c.action + ':' + (c.body.dir || ''))),
+)
+check('chip lists the worktrees', textsOf(chipOpen).join(' ').includes('/tmp/demo/app-worktrees/feat'), textsOf(chipOpen).join(' ').slice(0, 240))
+const openHere = findButton(chipOpen, '打开')
+check('chip offers to open a worktree', openHere !== undefined)
+openHere?.props.onClick()
+const chipAfterOpen = await renderChip()
+check(
+  'selecting adopts the worktree as a workspace',
+  calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/feat'),
+  JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
+)
+check('selecting opens a session rooted in that worktree', createdSessions[0]?.cwd === '/tmp/demo/app-worktrees/feat', JSON.stringify(createdSessions))
+check('the created session is opened', openedSessions.includes(createdSessions[0]?.sessionId), JSON.stringify(openedSessions))
+void chipAfterOpen
+
+process.stdout.write('\ncomposer chip: new worktree\n')
+// Picking a worktree collapses the popover, so it is reopened here rather than
+// reusing the previous tree.
+findButton(await renderChip(), '工作树')?.props.onClick()
+const chipOpen2 = await renderChip()
+check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
+check('chip surfaces the branch list', textsOf(chipOpen2).join(' ').includes('origin/colleague/feature'), textsOf(chipOpen2).join(' ').slice(0, 300))
+findButton(chipOpen2, '新建工作树')?.props.onClick()
+const formOpen = await renderChip()
+check('chip new-worktree form takes a branch', findInput(formOpen, '分支名') !== undefined)
+check('chip new-worktree form takes a base', findInput(formOpen, '起点') !== undefined)
+// `findInput` returns the `<input>` node, whose handler takes a DOM event;
+// `Field` unwraps it before calling the chip's value-based onChange.
+findInput(formOpen, '分支名')?.props.onChange({ target: { value: 'colleague/feature' } })
+const typed = await renderChip()
+// Re-read the input from the re-rendered tree: the handler closes over the old
+// form object, so a stale node would overwrite the branch on the next commit.
+findInput(typed, '分支名')?.props.onChange({ target: { value: 'colleague/feature' } })
+const typed2 = await renderChip()
+const createButton = findButton(typed2, '创建')
+check('chip submits the create', createButton !== undefined, textsOf(typed).join(' ').slice(0, 300))
+createButton?.props.onClick()
+const created = await renderChip()
+check('chip posts the create to the host', calls.some((call) => call.action === 'create'), JSON.stringify(calls.map((c) => c.action)))
+check('chip reports the remote pickup', textsOf(created).join(' ').includes('已从 origin/colleague/feature 拉取'), textsOf(created).join(' ').slice(-300))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

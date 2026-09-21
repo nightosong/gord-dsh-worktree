@@ -200,6 +200,69 @@ try {
 
   const pruned = await registered.get('worktree_prune').execute({ dryRun: true, workdir: repo }, exec)
   check('worktree_prune supports a dry run', pruned.dryRun === true && typeof pruned.output === 'string')
+
+  // A branch that exists only on a remote is the case that used to be silently
+  // wrong: naming it created a fresh branch of the same name off the local base,
+  // so the caller believed they held the remote's commits when they did not.
+  // Each probe needs its own clone, because an earlier probe's new local branch
+  // would push a later probe down the "already exists, just check it out" path.
+  process.stdout.write('\nremote-only branches\n')
+  const origin = join(scratch, 'origin.git')
+  execFileSync('git', ['init', '--bare', '--initial-branch=main', origin], { encoding: 'utf8' })
+  git(repo, 'remote', 'add', 'origin', origin)
+  git(repo, 'push', '-q', 'origin', 'main')
+
+  const author = join(scratch, 'author')
+  execFileSync('git', ['clone', '-q', origin, author], { encoding: 'utf8' })
+  git(author, 'config', 'user.email', 'author@example.com')
+  git(author, 'config', 'user.name', 'author')
+  git(author, 'checkout', '-q', '-b', 'colleague/feature')
+  writeFileSync(join(author, 'colleague.txt'), 'their work\n')
+  git(author, 'add', '.')
+  git(author, 'commit', '-m', 'colleague work')
+  git(author, 'push', '-q', 'origin', 'colleague/feature')
+  const remoteCommit = git(author, 'rev-parse', 'HEAD')
+
+  /** A fresh clone tracking `origin`, so probes cannot contaminate each other. */
+  const freshClone = (name) => {
+    const dir = join(scratch, name)
+    execFileSync('git', ['clone', '-q', origin, dir], { encoding: 'utf8' })
+    git(dir, 'config', 'user.email', 'test@example.com')
+    git(dir, 'config', 'user.name', 'test')
+    return dir
+  }
+
+  const picked = await service.createWorktree({ dir: freshClone('picked'), branch: 'colleague/feature', path: join(scratch, 'wt-picked') })
+  check('remote-only branch is created', picked.ok === true, JSON.stringify(picked))
+  check('remote-only branch reports the pickup', picked.pickedUpRemote === 'origin/colleague/feature', picked.pickedUpRemote)
+  check('remote-only branch starts at the remote commit', git(picked.path, 'rev-parse', 'HEAD') === remoteCommit)
+  check(
+    'remote-only branch tracks the remote',
+    git(picked.path, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') === 'origin/colleague/feature',
+  )
+
+  const shadowed = await service.createWorktree({
+    dir: freshClone('shadowed'),
+    branch: 'colleague/feature',
+    base: 'main',
+    path: join(scratch, 'wt-shadowed'),
+  })
+  check('an explicit base is still honoured', shadowed.ok === true && shadowed.base === 'main', JSON.stringify(shadowed))
+  check('shadowed remote is reported', shadowed.shadowedRemote === 'origin/colleague/feature', shadowed.shadowedRemote)
+  check('pickedUpRemote stays unset when a base was named', shadowed.pickedUpRemote === undefined)
+
+  const plain = await service.createWorktree({ dir: freshClone('plain'), branch: 'feat/mine', base: 'main', path: join(scratch, 'wt-plain') })
+  check('a normal new branch reports no remote noise', plain.pickedUpRemote === undefined && plain.shadowedRemote === undefined)
+
+  const branchesList = await service.listWorktrees(freshClone('branches'))
+  check('list exposes remote-tracking branches', branchesList.branches.includes('origin/colleague/feature'), JSON.stringify(branchesList.branches))
+  check('list keeps local branches separate', branchesList.localBranches.includes('main') && !branchesList.localBranches.includes('origin/colleague/feature'))
+
+  const listTool = await registered.get('worktree_list').execute({ workdir: freshClone('listtool') }, exec)
+  check('worktree_list tool surfaces branches', Array.isArray(listTool.branches) && listTool.branches.length > 0, JSON.stringify(listTool.branches))
+  check('worktree_list tool surfaces localBranches', Array.isArray(listTool.localBranches))
+  const listRendered = registered.get('worktree_list').output.render({}, listTool)
+  check('worktree_list text names the branches', listRendered[0].text.includes('Branches:'), listRendered[0].text.slice(0, 120))
 } finally {
   rmSync(scratch, { recursive: true, force: true })
 }
