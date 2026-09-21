@@ -211,8 +211,18 @@ const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 check('bundle registers with the module loader', registration !== undefined)
 check('bundle keeps the package id', registration?.id === 'gord-dsh-worktree', registration?.id)
 
+// `createPortal` is what puts the picker onto the Hero row; the stub records
+// where it was asked to render so the placement can be asserted.
+const portalCalls = []
+const ReactDOM = {
+  createPortal(node, container) {
+    portalCalls.push(container)
+    return node
+  },
+}
 const bundle = registration.factory((name) => {
   if (name === 'react') return React
+  if (name === 'react-dom') return ReactDOM
   throw new Error(`unexpected require(${JSON.stringify(name)})`)
 })
 check('bundle exports apply', typeof bundle.apply === 'function')
@@ -477,7 +487,17 @@ check('chip hides when no session is addressed', asMissing === null, JSON.string
 
 const chip = await renderChip()
 const chipText = textsOf(chip).join(' ')
-check('chip names itself', chipText.includes('工作树'), chipText.slice(0, 200))
+// The control shows its value, like the workspace and preset controls beside
+// it; its name lives in the aria-label and tooltip rather than a prefix.
+check('chip is named for assistive tech', findByClass(chip, 'gord-dsh-worktree-select')?.props['aria-label'] === '工作树')
+check('chip shows its value', chipText.includes('当前工作区'), chipText.slice(0, 200))
+// Closed by default, and defaulting to the project's own directory rather than
+// to a worktree: that is where a session starts unless one is asked for.
+check('chip defaults to the current workspace', chipText.includes('当前工作区'), chipText.slice(0, 200))
+check('chip is collapsed until asked', findByClass(chip, 'gord-dsh-worktree-option') === undefined)
+// With no row to attach to (no DOM here) the control renders in place rather
+// than vanishing; the portal itself is verified against the live shell.
+check('chip degrades to inline when no row is found', portalCalls.length === 0)
 
 process.stdout.write('\ncomposer chip: picker\n')
 const chipToggle = findByClass(chip, 'gord-dsh-worktree-select')
@@ -489,9 +509,18 @@ check(
   calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
   JSON.stringify(calls.map((c) => c.action + ':' + (c.body.dir || ''))),
 )
-check('chip lists the worktrees', textsOf(chipOpen).join(' ').includes('/tmp/demo/app-worktrees/feat'), textsOf(chipOpen).join(' ').slice(0, 240))
-const openHere = findButton(chipOpen, '打开')
-check('chip offers to open a worktree', openHere !== undefined)
+// The menu is the two-option list the control promises: the local workspace,
+// the other worktrees, and the create entry — not a panel of prose.
+const openedText = textsOf(chipOpen).join(' ')
+check('menu offers the current workspace', openedText.includes('当前工作区'), openedText.slice(0, 240))
+check('menu offers the other worktree', openedText.includes('/tmp/demo/app-worktrees/feat'), openedText.slice(0, 240))
+check('menu offers to create a worktree', openedText.includes('新建工作树'), openedText.slice(0, 240))
+// The main worktree is the local directory already offered above; listing it
+// twice would be a duplicate choice.
+check('menu does not repeat the main worktree', (openedText.match(/\/tmp\/demo\/app(?![\w-])/g) || []).length <= 2, openedText.slice(0, 300))
+
+const openHere = findButton(chipOpen, 'feat')
+check('chip offers to open a worktree', openHere !== undefined, textsOf(chipOpen).join(' ').slice(0, 200))
 openHere?.props.onClick()
 const chipAfterOpen = await renderChip()
 check(
@@ -501,7 +530,7 @@ check(
 )
 check('selecting opens a session rooted in that worktree', createdSessions[0]?.cwd === '/tmp/demo/app-worktrees/feat', JSON.stringify(createdSessions))
 check('the created session is opened', openedSessions.includes(createdSessions[0]?.sessionId), JSON.stringify(openedSessions))
-void chipAfterOpen
+check('selecting collapses the menu', findByClass(chipAfterOpen, 'gord-dsh-worktree-option') === undefined)
 
 process.stdout.write('\ncomposer chip: new worktree\n')
 // Picking a worktree collapses the popover, so it is reopened here rather than
@@ -509,7 +538,6 @@ process.stdout.write('\ncomposer chip: new worktree\n')
 findByClass(await renderChip(), 'gord-dsh-worktree-select')?.props.onClick()
 const chipOpen2 = await renderChip()
 check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
-check('chip surfaces the branch list', textsOf(chipOpen2).join(' ').includes('origin/colleague/feature'), textsOf(chipOpen2).join(' ').slice(0, 300))
 findButton(chipOpen2, '新建工作树')?.props.onClick()
 const formOpen = await renderChip()
 check('chip new-worktree form takes a branch', findInput(formOpen, '分支名') !== undefined)

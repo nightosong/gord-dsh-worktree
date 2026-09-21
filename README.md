@@ -9,8 +9,9 @@ parallel work in its own directory and branch, from the agent or from Settings.
 
 - **Agent tools** — `worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`.
   An agent can branch off an isolated checkout for a task instead of doing everything in one working tree.
-- **Composer chip** — a *Worktree* control in the composer tool row: pick one of the repository's
-  worktrees to start a session in, or create a new one without leaving the conversation.
+- **Worktree selector** — a dropdown on the New Session row, beside the workspace and preset
+  controls: it defaults to the current workspace, and offers the project's other worktrees or
+  creating a new one. It is present only while the session is still blank.
 - **Settings page** — *Settings → Worktrees*: the repository's worktrees with branch/HEAD and
   current/detached/locked/pruned badges, a create form (branch, base, directory), dry-run prune, and
   one-click **Open as workspace** so a new worktree becomes a sidebar workspace you can start a session in.
@@ -30,12 +31,19 @@ the caller believed they held the colleague's commits.
 An explicit `base` is still honoured — a deliberate *new branch from main* has to stay possible — but
 the result then carries `shadowedRemote` so the ambiguity is visible.
 
-## Working location in the composer
+## Working location for a New Session
 
-A session's directory is fixed when it is created, so the chip cannot retarget a running session:
-picking a worktree registers it as a workspace and **opens a session there**, the same model the core
-workspace picker uses. The selectors the core composer already occupies are `single` slots, so this
-registers into `conversation.input.left` — a `list` slot in the same tool row.
+A session's directory is fixed when it is created, so this control cannot retarget a running session:
+choosing a worktree registers it as a workspace and **opens a session there**, the same model the core
+workspace picker uses. It is therefore shown only while the addressed session is still blank.
+
+It sits on the Hero's own working-location row, beside the workspace and preset controls. That row is
+laid out by the core plugin and all three `conversation.hero.*` slots are `single`, where a second
+occupant *shadows* the first instead of sitting beside it — so the control is rendered onto the row's
+element with `createPortal`, which is how the core plugins place themselves inside surfaces they do
+not own. The row is found from this plugin's own host outward via the `conversation.hero.workspace`
+`data-slot` anchor, not by a document-wide query. If no row can be found the control renders in place
+rather than disappearing.
 
 ## Renamed from `dsh-worktree`
 
