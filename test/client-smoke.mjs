@@ -14,6 +14,7 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { Context } from '@deepseek-ai/cordis'
 
 let failures = 0
 let checks = 0
@@ -183,30 +184,56 @@ check('bundle declares the slots injection', Array.isArray(bundle.inject) && bun
 process.stdout.write('\nslots registration\n')
 let sectionSpec
 let Section
-const ctx = {
-  get: () => undefined,
-  effect: (callback) => callback(),
-  slots: {
-    inject(name, factory) {
-      sectionSpec = { name, factory }
-    },
-    register(spec, component) {
-      sectionSpec = { name: sectionSpec.name, spec }
-      Section = component
-      return () => {}
-    },
+// A real cordis context, with both services provided by sibling plugin fibers —
+// the same topology the client shell uses. This is not decoration: reaching an
+// un-injected service as a property only throws when its provider is a sibling
+// rather than an ancestor, so a stub that answers every lookup hides exactly
+// the bug that blanked the Settings page.
+const root = new Context()
+const registeredDicts = []
+root.plugin({
+  name: 'test:services',
+  apply(serviceCtx) {
+    serviceCtx.provide('locale', {
+      register(ns, dicts) {
+        registeredDicts.push({ ns, dicts })
+        return () => {}
+      },
+      bind(ns) {
+        return (key) => `${ns}:${key}`
+      },
+    })
+    serviceCtx.provide('slots', {
+      inject(name, factory) {
+        sectionSpec = { name, factory }
+        return factory()
+      },
+      register(spec, component) {
+        sectionSpec = { ...sectionSpec, spec }
+        Section = component
+        return () => {}
+      },
+    })
   },
+})
+
+check('bundle declares the locale injection', Array.isArray(bundle.inject) && bundle.inject.includes('locale'), JSON.stringify(bundle.inject))
+root.plugin({ name: 'gord-dsh-worktree', inject: bundle.inject, apply: bundle.apply })
+// A plugin that injects waits for its services, so `apply` lands a tick later.
+for (let tick = 0; tick < 20 && typeof Section !== 'function'; tick++) {
+  await new Promise((resolve) => setTimeout(resolve, 5))
 }
-bundle.apply(ctx)
+
 check('injects into settings.section', sectionSpec?.name === 'settings.section', sectionSpec?.name)
-// The bundle registers through the inject factory, so read the spec the
-// factory actually built rather than the pairing stub's placeholder.
-const builtSpec = sectionSpec.factory()
-check('factory returns a disposer', typeof builtSpec === 'function')
+check('registers a component', typeof Section === 'function')
 check('section has an id', sectionSpec?.spec?.id === 'worktree', JSON.stringify(sectionSpec?.spec))
 check('section carries a nav order', typeof sectionSpec?.spec?.order === 'number', String(sectionSpec?.spec?.order))
-check('section labels itself', typeof sectionSpec?.spec?.label === 'function' && sectionSpec.spec.label() !== '', String(sectionSpec?.spec?.label?.()))
-check('registers a component', typeof Section === 'function')
+check('section declares its locale namespace', sectionSpec?.spec?.locale === 'gord-worktree', String(sectionSpec?.spec?.locale))
+check('dictionaries register under that namespace', registeredDicts.length === 1 && registeredDicts[0].ns === 'gord-worktree', JSON.stringify(registeredDicts.map((d) => d.ns)))
+// Regression: the settings nav makes this call, and it is where the
+// un-injected `ctx.locale` used to throw and blank the whole page.
+const navLabel = sectionSpec?.spec?.label?.()
+check('section label resolves through the locale service', navLabel === 'gord-worktree:nav.label', String(navLabel))
 
 process.stdout.write('\nrender: initial load\n')
 
