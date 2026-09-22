@@ -5,6 +5,8 @@ parallel work in its own directory and branch, from the agent or from Settings.
 
 [中文说明](README.zh.md)
 
+![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
+
 ## What it does
 
 - **Agent tools** — `worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`.
@@ -15,6 +17,8 @@ parallel work in its own directory and branch, from the agent or from Settings.
 - **Settings page** — *Settings → Worktrees*: the repository's worktrees with branch/HEAD and
   current/detached/locked/pruned badges, a create form (branch, base, directory), dry-run prune, and
   one-click **Open as workspace** so a new worktree becomes a sidebar workspace you can start a session in.
+
+  ![The Worktrees settings page: repository, create form, and the worktree list with its actions](docs/images/worktree-settings.png)
 - **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
   checks that remote branch out from its real commit and sets it as upstream. If you name a base
   anyway, the shadowed remote is reported rather than silently ignored.
