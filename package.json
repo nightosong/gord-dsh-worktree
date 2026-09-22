@@ -39,6 +39,7 @@
   },
   "files": [
     "lib",
+    "tools",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
