@@ -64,6 +64,21 @@ in appears in the sidebar beside the project, titled by its directory code, exac
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
+### Keeping the sidebar clean
+
+The worktree's workspace is titled after its project — `repo · 1dda6ec0`, not a bare `1dda6ec0` — because
+the title is the only place that relationship can be shown. The sidebar groups by workspace, one group per
+directory, with no nesting and no hidden flag on the record, so a worktree is a group of its own whether or
+not it looks like one. Codex reads cleanly here for a structural reason rather than a smarter trick: it
+groups threads by *project* and treats the worktree as an attribute of a thread, so a worktree thread simply
+lands under its project. DSH's grouping key is the directory, so there is nothing to nest into.
+
+If you would rather not see the groups at all, the shell already has the mode for it: **View options →
+Group by → In one list** in the sidebar header. Sessions from every workspace become one recency-ordered
+list, so a worktree session sits beside the project's with no heading of its own. It is a saved preference,
+it applies immediately, and no plugin change is involved — it is the closest thing to Codex's sidebar that
+the current shell offers.
+
 The menu dismisses on a pointer anywhere outside the control and on Escape (which also returns focus to
 the trigger). The core selectors get that from the shared `Menu` primitive; this one cannot use it,
 because this panel is not a flat `{id, label}` list — it carries a status line and a busy state — so the

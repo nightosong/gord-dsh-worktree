@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
+import { basename } from 'node:path'
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -261,6 +262,7 @@ try {
   process.stdout.write('\npanel API routes\n')
   const routes = new Map()
   const adopted = []
+  const adoptedTitles = []
   const routeCtx = {
     tools: stubCtx.tools,
     effect: (callback) => callback(),
@@ -274,8 +276,9 @@ try {
       },
     },
     workspaceRegistry: {
-      async create(path) {
+      async create(path, title) {
         adopted.push(path)
+        adoptedTitles.push(title)
         return { id: 'w-adopted', title: 'adopted' }
       },
     },
@@ -308,6 +311,13 @@ try {
   // path. Without one the shell has nowhere to draw the session and shows
   // "choose a workspace to start" over a session that exists.
   check('panel create registers a workspace', routed.workspace?.workspaceId === 'w-adopted', JSON.stringify(routed.workspace))
+  // Titled after the project, because the sidebar cannot nest a worktree under
+  // it: a bare code reads as an unrelated project.
+  check(
+    'the worktree workspace is titled after its project',
+    adoptedTitles.length === 1 && adoptedTitles[0] === `${basename(repo)} · worktree-route-check`,
+    JSON.stringify(adoptedTitles),
+  )
   check('panel create adopts the worktree path', adopted.length === 1 && adopted[0] === routed.path, JSON.stringify({ adopted, path: routed.path }))
   // The tool must not: a worktree made mid-conversation leaves the session
   // where it is, so adopting there would add a sidebar entry nobody asked for.
