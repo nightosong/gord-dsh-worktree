@@ -64,6 +64,36 @@ in appears in the sidebar beside the project, titled by its directory code, exac
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
+### Showing a worktree under its project
+
+The worktree's sessions can be shown under the project's own group, one level in from where they land
+by default. This needs a patch to DSH, and the patch is in this repository:
+
+```sh
+npm run patch:sidebar     # then restart dsh web
+npm run unpatch:sidebar   # to restore the shipped bundle
+```
+
+It changes one small function — `groupByWorkspace`, the whole of the sidebar's grouping — so a worktree's
+sessions fold into the project's group and the worktree stops being a group of its own. That is how Codex
+reads, and for the same reason: it groups threads by project and treats the worktree as a thread
+attribute, while DSH's grouping key is the directory and its records have no parent field. Two rules
+decide the parent: a workspace whose directory is inside another's, and a parent map this plugin
+publishes for worktrees kept outside the project — which is the default, `$DSH_HOME/worktree/<code>`.
+The map is read from `localStorage` because the first render after a reload already needs the answer and
+a fetch would land too late.
+
+Why a patch and not the plugin: a client plugin can only nest by taking over the whole
+`sidebar.workspaces` slot, which is `single` and owns the section header, the search box, every session
+row and every workspace dialog — 14 components, with drag reordering, rename, archive and fork. Taking it
+over would mean reimplementing all of it and drifting from core on every release. The grouping function
+is a dozen lines.
+
+**A DSH upgrade replaces the file, so re-run `npm run patch:sidebar` after one.** The script is
+idempotent, keeps the shipped bundle at `client.js.orig` before the first patch, and refuses to guess if
+the function is not in the shape it expects — a newer DSH needs the patch updated rather than forced.
+`npm run patch:sidebar -- --check` reports whether a bundle is patched and exits non-zero when it is not.
+
 ### Keeping the sidebar clean
 
 The worktree's workspace is titled after its project — `repo · 1dda6ec0`, not a bare `1dda6ec0` — because

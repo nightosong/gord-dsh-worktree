@@ -575,6 +575,35 @@ check('chip is collapsed until asked', findByClass(chip, 'gord-dsh-worktree-opti
 // than vanishing; the portal itself is verified against the live shell.
 check('chip degrades to inline when no row is found', portalCalls.length === 0)
 
+process.stdout.write('\nworktree parent map\n')
+// The patched sidebar grouping folds a worktree's sessions into its project's
+// group, and it reads this map synchronously during render — a fetch would land
+// after the first paint and flash the worktree as a second project. So the
+// contract is: every worktree of the repo, keyed by path, pointing at the repo.
+const parents = JSON.parse(globalThis.window.localStorage.getItem('gord-worktree:parents') ?? '{}')
+check(
+  'the panel publishes each worktree as a child of its repo',
+  parents['/tmp/demo/app-worktrees/feat'] === '/tmp/demo/app',
+  JSON.stringify(parents),
+)
+check(
+  'the project is not published as its own child',
+  parents['/tmp/demo/app'] === undefined,
+  JSON.stringify(parents),
+)
+// A blocked store must not break the panel: the sidebar then just shows the
+// worktree as its own group, which is the unpatched behaviour.
+const realSet = globalThis.window.localStorage.setItem
+globalThis.window.localStorage.setItem = () => { throw new Error('quota') }
+let survived = true
+try {
+  findByClass(await renderChip(), 'gord-dsh-worktree-seat')
+} catch (error) {
+  survived = false
+}
+globalThis.window.localStorage.setItem = realSet
+check('a failing localStorage does not break the panel', survived)
+
 process.stdout.write('\ncomposer chip: picker\n')
 const chipToggle = findByClass(chip, 'gord-dsh-worktree-seat')
 check('chip exposes a toggle', chipToggle !== undefined)
