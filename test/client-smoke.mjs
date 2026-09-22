@@ -353,7 +353,7 @@ root.plugin({
       // pass the suite while failing in the browser.
       create: (opts) => {
         const sessionId = `new-${createdSessions.length + 1}`
-        createdSessions.push({ cwd: opts.cwd, sessionId })
+        createdSessions.push({ cwd: opts.cwd, workspaceId: opts.workspaceId, sessionId })
         return Promise.resolve(sessionId)
       },
       open: (id) => {
@@ -434,7 +434,9 @@ globalThis.fetch = (url, options) => {
             base: 'origin/colleague/feature',
             pickedUpRemote: body.branch === 'colleague/feature' ? 'origin/colleague/feature' : undefined,
             // NOTE: kept literal (not JSON-round-tripped) on purpose in the other probes.
-            workspace: { workspaceId: 'w1' },
+            // The route adopts the worktree so the session has a workspace to
+            // belong to; the client then starts the session against this id.
+            workspace: { workspaceId: 'ws-new', title: 'new', path: '/tmp/demo/app-worktrees/new' },
           }
         : action === 'remove'
           ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
@@ -643,52 +645,49 @@ findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
 check('menu closed before the next block', findByClass(await renderChip(), 'gord-dsh-worktree-option') === undefined)
 
 process.stdout.write('\ncomposer chip: new worktree\n')
-// Picking a worktree collapses the popover, so it is reopened here rather than
-// reusing the previous tree.
+// Choosing a new worktree is one click and no form: the branch is cut from the
+// current one and named for the code that names the directory, so there is
+// nothing to type. What has to happen is the part that was missing — the
+// session must end up rooted in the new directory, because a session's
+// directory is fixed when it is created and cannot be changed afterwards.
 findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
 const chipOpen2 = await renderChip()
 check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
-findButton(chipOpen2, '新建工作树')?.props.onClick()
-const formOpen = await renderChip()
-check('chip new-worktree form takes a branch', findInput(formOpen, '自动生成') !== undefined)
-// The base is picked, not typed: a branch name is one choice out of many, and
-// a free-text field invited typos that only failed once git was called.
-const baseSelect = findSelect(formOpen)
-check('chip new-worktree form offers a base dropdown', baseSelect !== undefined)
-check('base dropdown defaults to the current branch', baseSelect?.props.value === '', JSON.stringify(baseSelect?.props.value))
-const baseLabels = (baseSelect?.children ?? []).map((option) => option.children.join(''))
-check('base dropdown names the current branch first', String(baseLabels[0]).includes('当前分支（main）'), JSON.stringify(baseLabels.slice(0, 3)))
-check('base dropdown lists the local branches', baseLabels.includes('main'), JSON.stringify(baseLabels))
-check('base dropdown lists remote-tracking branches', baseLabels.includes('origin/main'), JSON.stringify(baseLabels))
-// `findInput` returns the `<input>` node, whose handler takes a DOM event;
-// `Field` unwraps it before calling the chip's value-based onChange.
-findInput(formOpen, '自动生成')?.props.onChange({ target: { value: 'colleague/feature' } })
-const typed = await renderChip()
-// Re-read the input from the re-rendered tree: the handler closes over the old
-// form object, so a stale node would overwrite the branch on the next commit.
-findInput(typed, '自动生成')?.props.onChange({ target: { value: 'colleague/feature' } })
-const typed2 = await renderChip()
-const createButton = findButton(typed2, '创建')
-check('chip submits the create', createButton !== undefined, textsOf(typed).join(' ').slice(0, 300))
-createButton?.props.onClick()
-const created = await renderChip()
-check('chip posts the create to the host', calls.some((call) => call.action === 'create'), JSON.stringify(calls.map((c) => c.action)))
-check('chip reports the remote pickup', textsOf(created).join(' ').includes('已从 origin/colleague/feature 拉取'), textsOf(created).join(' ').slice(-300))
-// Creating a worktree must not move the user. A worktree is a second checkout
-// of the same project, not a second project: registering it as a workspace put
-// a new entry in the sidebar, and opening a session in it moved the
-// conversation out from under whoever asked for the checkout. The session is
-// left exactly where it was, and only the created path is reported.
-const createCalls = calls.filter((call) => call.action === 'create')
-check('the create carried the typed branch', createCalls.at(-1)?.body.branch === 'colleague/feature', JSON.stringify(createCalls.at(-1)?.body))
-check('the create carried the chosen base', createCalls.at(-1)?.body.base === '', JSON.stringify(createCalls.at(-1)?.body))
 check(
-  'creating registers no workspace',
+  'the new-worktree entry asks for nothing',
+  findInput(chipOpen2, '自动生成') === undefined && findSelect(chipOpen2) === undefined,
+  textsOf(chipOpen2).join(' ').slice(0, 240),
+)
+const sessionsBeforeCreate = createdSessions.length
+findButton(chipOpen2, '新建工作树')?.props.onClick()
+const created = await renderChip()
+const createCalls = calls.filter((call) => call.action === 'create')
+check('chip posts the create to the host', createCalls.length === 1, JSON.stringify(calls.map((c) => c.action)))
+check('the create carried no branch and no base', createCalls.at(-1)?.body.branch === '' && createCalls.at(-1)?.body.base === '', JSON.stringify(createCalls.at(-1)?.body))
+// The point of the whole change: the session is created rooted in the worktree
+// and opened, so the next message is sent there. Nothing else can move it —
+// `sessions.create` is the only moment a directory is chosen.
+// Addressed by workspace, not by directory: the two are mutually exclusive, and
+// a session given only a cwd belongs to no workspace — which leaves the shell
+// nowhere to draw it, showing "choose a workspace to start" over a session that
+// does exist.
+check(
+  'creating starts a session in the new worktree',
+  createdSessions.length === sessionsBeforeCreate + 1 && createdSessions.at(-1)?.workspaceId === 'ws-new',
+  JSON.stringify(createdSessions.slice(sessionsBeforeCreate)),
+)
+check(
+  'creating opens that session',
+  openedSessions.includes(createdSessions.at(-1)?.sessionId),
+  JSON.stringify({ opened: openedSessions, created: createdSessions.at(-1) }),
+)
+// The client does not adopt on its own — the host route does, because only the
+// host holds the registry. A second adoption here would race it.
+check(
+  'the client adopts nothing itself',
   !calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/new'),
   JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
 )
-check('creating starts no session', createdSessions.length === sessionsBeforeLocal, JSON.stringify(createdSessions.slice(sessionsBeforeLocal)))
-check('creating opens no session', openedSessions.length === 0, JSON.stringify(openedSessions))
 check('creating reports where the worktree landed', textsOf(created).join(' ').includes('已创建 /tmp/demo/app-worktrees/new'), textsOf(created).join(' ').slice(-300))
 
 process.stdout.write('\nlocalization\n')

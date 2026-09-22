@@ -40,27 +40,34 @@ otherwise, and **New worktree**. Existing worktrees are deliberately not listed 
 checkouts of a project the session already belongs to, so a worktree is reached by its path rather than
 by a second sidebar entry.
 
-**Creating a worktree does not move you.** A worktree is a second checkout of the *same* project, not a
-second project, so the session keeps its workspace and its directory and the new path is simply reported.
-This is a deliberate reversal: an earlier version registered the new directory as a DSH workspace and
-opened a session in it, which put a new entry in the sidebar and moved the conversation out from under
-whoever asked for the checkout. Registering is still possible, but only through the explicit
+**New worktree takes no input and asks no questions.** The branch is cut from the current one and named
+for the code that names the directory, so the whole decision is "a fresh checkout" versus "here". Pick
+it and you are in the new worktree: the worktree is made, registered, and a session is started and
+opened inside it, ready for your first message. Once there, the branch is yours — create or switch
+branches with ordinary git when the task calls for it; changing branch does not need a new worktree.
+
+**It has to happen on the click, not on the first message.** A session's directory is fixed when the
+session is created, and the blank session in the composer is created before anything is typed, so there
+is no later moment at which a message could be aimed at a directory that does not exist yet. Creating
+the worktree and the session together is the only order that works; a version that created the worktree
+and left the session alone reported success and quietly ran the conversation in the project anyway.
+
+**A worktree is registered as a workspace, and that is not a choice.** Workspace membership is exact
+path equality (`sessionPath(id) === record.path`), `attachSession` rejects a session whose cwd differs
+from its workspace path, and the record itself carries no hidden or archived flag. A session rooted in a
+worktree therefore needs a workspace at that path — without one the shell has nowhere to draw it and
+shows *choose a workspace to start* over a session that does exist. So each worktree you start a session
+in appears in the sidebar beside the project, titled by its directory code, exactly as the core's own
+*new workspace* flow would leave it. Registering on its own is also available as the explicit
 **Open as workspace** action in Settings.
 
-Note that DSH makes the old behaviour impossible to reach by accident anyway: workspace membership is
-decided by exact path equality (`sessionPath(id) === record.path`) and `attachSession` rejects a session
-whose cwd differs from the workspace path, so a session rooted in a worktree directory can never appear
-under the project it came from.
-
-**Base** is a dropdown of the repository's local and remote-tracking branches, defaulting to the current
-branch. Leaving **Branch** empty generates a `worktree/<code>` branch from that base, and the directory
-is named by the same code — so two worktrees made from one base never collide, and the common case needs
-no typing at all. Naming a branch instead gives the directory that name.
+Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
+where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
 The menu dismisses on a pointer anywhere outside the control and on Escape (which also returns focus to
 the trigger). The core selectors get that from the shared `Menu` primitive; this one cannot use it,
-because the create flow needs a form inside the panel while `Menu` items are a flat `{id, label}` list,
-so the behaviour is reproduced directly.
+because this panel is not a flat `{id, label}` list — it carries a status line and a busy state — so the
+behaviour is reproduced directly.
 
 It sits on the Hero's own working-location row, beside the workspace and preset controls, and is styled
 to match them exactly: the same borderless 16px-radius pill, the same 13px/500 type, the same shared

@@ -303,8 +303,15 @@ try {
 
   const routed = await callApi('create', { dir: repo, branch: 'worktree/route-check', base: 'main' })
   check('panel create succeeds over the route', routed.ok === true, JSON.stringify(routed))
-  check('panel create registers no workspace', routed.workspace === undefined, JSON.stringify(routed.workspace))
-  check('panel create calls no workspace registry', adopted.length === 0, JSON.stringify(adopted))
+  // The route adopts, and it has to: workspace membership is exact-path
+  // equality, so a session rooted in the worktree needs a workspace at that
+  // path. Without one the shell has nowhere to draw the session and shows
+  // "choose a workspace to start" over a session that exists.
+  check('panel create registers a workspace', routed.workspace?.workspaceId === 'w-adopted', JSON.stringify(routed.workspace))
+  check('panel create adopts the worktree path', adopted.length === 1 && adopted[0] === routed.path, JSON.stringify({ adopted, path: routed.path }))
+  // The tool must not: a worktree made mid-conversation leaves the session
+  // where it is, so adopting there would add a sidebar entry nobody asked for.
+  check('the tool path adopts nothing', adopted.length === 1, JSON.stringify(adopted))
   check('panel create reports the path it made', routed.path === join(scratch, 'worktree', 'worktree-route-check'), routed.path)
 
   // A branch that exists only on a remote is the case that used to be silently
