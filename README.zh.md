@@ -59,8 +59,7 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 
 | 字段 | 默认值 | 含义 |
 | ---- | ------ | ---- |
-| `defaultParent` | *空* | 新建 worktree 的父目录。留空用同级的 `<仓库名>-worktrees/`。 |
-| `adoptWorkspace` | `true` | 面板创建 worktree 后自动注册为 DSH 工作区。 |
+| `defaultParent` | *空* | 新建 worktree 的父目录。留空用 `$DSH_HOME/worktree/`。 |
 
 ## 开发
 

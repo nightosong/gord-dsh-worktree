@@ -8,11 +8,13 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { Readable } from 'node:stream'
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import * as service from '../lib/service.js'
-import { defaultBranchName, defaultWorktreeParent, parseWorktreeList, slugifyBranch } from '../lib/worktree.js'
+import { defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode } from '../lib/worktree.js'
 
 let failures = 0
 let checks = 0
@@ -34,6 +36,10 @@ function git(cwd, ...args) {
 }
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'gord-dsh-worktree-test-')))
+// The default worktree parent is `$DSH_HOME/worktree`, so the home is pointed
+// at the scratch directory: the default is then exercised for real without
+// writing into the user's own `~/.dsh`.
+process.env.DSH_HOME = scratch
 const repo = join(scratch, 'app')
 process.stdout.write(`scratch repository: ${repo}\n`)
 
@@ -46,10 +52,14 @@ try {
   git(repo, 'commit', '-m', 'init')
 
   process.stdout.write('\npure helpers\n')
-  check('defaultBranchName derives worktree/<base>', defaultBranchName('main') === 'worktree/main', defaultBranchName('main'))
-  check('defaultBranchName strips origin/', defaultBranchName('origin/feature/x') === 'worktree/feature/x', defaultBranchName('origin/feature/x'))
+  // Worktrees live outside every repository: no ignore rule to add and forget,
+  // and nothing extra for a build or search to walk.
+  check('default parent is the harness home', defaultWorktreeParent() === join(dshHomePath('worktree')), defaultWorktreeParent())
+  check('default parent is outside the repository', !defaultWorktreeParent().startsWith(process.cwd()), defaultWorktreeParent())
+  check('worktree codes are eight hex characters', /^[0-9a-f]{8}$/.test(worktreeCode()), worktreeCode())
+  check('worktree codes do not repeat', worktreeCode() !== worktreeCode())
   check('slugifyBranch flattens slashes', slugifyBranch('worktree/feature/x') === 'worktree-feature-x', slugifyBranch('worktree/feature/x'))
-  check('defaultWorktreeParent is a sibling', defaultWorktreeParent(repo) === join(scratch, 'app-worktrees'), defaultWorktreeParent(repo))
+  check('the default parent ignores the repository', defaultWorktreeParent() === join(scratch, 'worktree'), defaultWorktreeParent())
   const parsed = parseWorktreeList(git(repo, 'worktree', 'list', '--porcelain'))
   check('parseWorktreeList reads the main worktree', parsed.length === 1 && parsed[0].branch === 'main', JSON.stringify(parsed))
 
@@ -66,7 +76,7 @@ try {
   const created = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main' })
   check('create ok', created.ok === true, JSON.stringify(created))
   check('create reports a new branch', created.createdBranch === true)
-  check('create used the sibling default parent', created.path === join(scratch, 'app-worktrees', 'worktree-feature-a'), created.path)
+  check('create used the default parent', created.path === join(scratch, 'worktree', 'worktree-feature-a'), created.path)
   check('create checked out the branch', created.branch === 'worktree/feature-a', created.branch)
   check('main worktree is untouched', git(repo, 'rev-parse', '--abbrev-ref', 'HEAD') === 'main')
 
@@ -166,7 +176,7 @@ try {
     get: () => undefined,
     on: () => {},
   }
-  plugin.apply(stubCtx, { defaultParent: '', adoptWorkspace: true })
+  plugin.apply(stubCtx, { defaultParent: '' })
   const expected = ['worktree_list', 'worktree_create', 'worktree_status', 'worktree_remove', 'worktree_prune']
   check('all five tools register', expected.every((name) => registered.has(name)), [...registered.keys()].join(', '))
   check('no unexpected tool names', registered.size === expected.length, String(registered.size))
@@ -200,6 +210,62 @@ try {
 
   const pruned = await registered.get('worktree_prune').execute({ dryRun: true, workdir: repo }, exec)
   check('worktree_prune supports a dry run', pruned.dryRun === true && typeof pruned.output === 'string')
+
+  // The panel's create route must not register a workspace. It used to, and the
+  // damage was invisible to the unit tests and to the client tests: the route
+  // adopted the new directory on its own, so a client that had stopped asking
+  // for adoption still produced a new sidebar entry — and, because a workspace
+  // is created with a blank session, silently moved the user's next message
+  // into the worktree. Asserting it at the route is the only place that catches
+  // a second adoption site.
+  process.stdout.write('\npanel API routes\n')
+  const routes = new Map()
+  const adopted = []
+  const routeCtx = {
+    tools: stubCtx.tools,
+    effect: (callback) => callback(),
+    get: () => undefined,
+    on: () => {},
+    webServer: {
+      port: 0,
+      register(route) {
+        routes.set(route.path, route.handler)
+        return () => routes.delete(route.path)
+      },
+    },
+    workspaceRegistry: {
+      async create(path) {
+        adopted.push(path)
+        return { id: 'w-adopted', title: 'adopted' }
+      },
+    },
+    inject(names, callback) {
+      // The settings and workspace injections only run where those services
+      // exist; this stub supplies the two the route needs.
+      if (names.every((name) => routeCtx[name] !== undefined)) callback(routeCtx)
+    },
+  }
+  plugin.apply(routeCtx, { defaultParent: '' })
+  const apiHandler = routes.get('/gord-dsh-worktree/api')
+  check('the panel API registers its route', typeof apiHandler === 'function')
+
+  /** Call one panel action and return the JSON body the route wrote. */
+  const callApi = async (action, body) => {
+    const req = Readable.from([Buffer.from(JSON.stringify(body))])
+    req.url = `/gord-dsh-worktree/api?action=${action}`
+    req.method = 'POST'
+    req.headers = {}
+    let parsed
+    const res = { writeHead() {}, end(text) { parsed = JSON.parse(text) } }
+    await apiHandler(req, res)
+    return parsed
+  }
+
+  const routed = await callApi('create', { dir: repo, branch: 'worktree/route-check', base: 'main' })
+  check('panel create succeeds over the route', routed.ok === true, JSON.stringify(routed))
+  check('panel create registers no workspace', routed.workspace === undefined, JSON.stringify(routed.workspace))
+  check('panel create calls no workspace registry', adopted.length === 0, JSON.stringify(adopted))
+  check('panel create reports the path it made', routed.path === join(scratch, 'worktree', 'worktree-route-check'), routed.path)
 
   // A branch that exists only on a remote is the case that used to be silently
   // wrong: naming it created a fresh branch of the same name off the local base,

@@ -18,8 +18,10 @@ parallel work in its own directory and branch, from the agent or from Settings.
 - **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
   checks that remote branch out from its real commit and sets it as upstream. If you name a base
   anyway, the shadowed remote is reported rather than silently ignored.
-- **No manual git** — creation is one atomic `git worktree add -b`, and the new directory defaults to a
-  sibling `<repo>-worktrees/<branch>` so a worktree never lands inside the repository it came from.
+- **No manual git** — creation is one atomic `git worktree add -b`, and the new directory defaults to
+  `$DSH_HOME/worktree/`, outside every repository: nothing to add to `.gitignore` and forget, nothing
+  for a build or a search to walk. The repository is unaffected either way — a worktree is linked from
+  `.git/worktrees`, so its location never mattered to git.
 
 ## Picking up someone else's branch
 
@@ -33,14 +35,27 @@ the result then carries `shadowedRemote` so the ambiguity is visible.
 
 ## Working location for a New Session
 
-A session's directory is fixed when it is created, so this control cannot retarget a running session:
-creating a worktree registers it as a workspace and **opens a session there**, the same model the core
-workspace picker uses. It is therefore shown only while the addressed session is still blank.
+The menu offers exactly two entries: **Current worktree**, where a session starts unless you ask
+otherwise, and **New worktree**. Existing worktrees are deliberately not listed — they are second
+checkouts of a project the session already belongs to, so a worktree is reached by its path rather than
+by a second sidebar entry.
 
-The menu offers exactly two entries: **Current workspace**, where a session starts unless you ask
-otherwise, and **New worktree**. Existing worktrees are deliberately not listed — creating one makes it
-a workspace, so it is already reachable from the workspace picker beside this control, and listing it
-twice would offer the same choice from two places.
+**Creating a worktree does not move you.** A worktree is a second checkout of the *same* project, not a
+second project, so the session keeps its workspace and its directory and the new path is simply reported.
+This is a deliberate reversal: an earlier version registered the new directory as a DSH workspace and
+opened a session in it, which put a new entry in the sidebar and moved the conversation out from under
+whoever asked for the checkout. Registering is still possible, but only through the explicit
+**Open as workspace** action in Settings.
+
+Note that DSH makes the old behaviour impossible to reach by accident anyway: workspace membership is
+decided by exact path equality (`sessionPath(id) === record.path`) and `attachSession` rejects a session
+whose cwd differs from the workspace path, so a session rooted in a worktree directory can never appear
+under the project it came from.
+
+**Base** is a dropdown of the repository's local and remote-tracking branches, defaulting to the current
+branch. Leaving **Branch** empty generates a `worktree/<code>` branch from that base, and the directory
+is named by the same code — so two worktrees made from one base never collide, and the common case needs
+no typing at all. Naming a branch instead gives the directory that name.
 
 The menu dismisses on a pointer anywhere outside the control and on Escape (which also returns focus to
 the trigger). The core selectors get that from the shared `Menu` primitive; this one cannot use it,
@@ -109,8 +124,7 @@ point at another one.
 
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
-| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses a sibling `<repo>-worktrees/` directory. |
-| `adoptWorkspace` | `true` | Register a worktree created from the panel as a DSH workspace. |
+| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. |
 
 ## Development
 

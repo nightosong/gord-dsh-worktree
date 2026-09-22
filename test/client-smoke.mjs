@@ -206,6 +206,24 @@ function findInput(node, placeholder) {
   return undefined
 }
 
+/** The first `<select>` in a rendered tree. */
+function findSelect(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findSelect(child)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (node.type === 'select') return node
+  for (const child of node.children) {
+    const hit = findSelect(child)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
 process.stdout.write('\nloading the bundle\n')
 
 /** The bundle registers itself here instead of in a browser. */
@@ -546,10 +564,10 @@ const chipText = textsOf(chip).join(' ')
 // The control shows its value, like the workspace and preset controls beside
 // it; its name lives in the aria-label and tooltip rather than a prefix.
 check('chip is named for assistive tech', findByClass(chip, 'gord-dsh-worktree-seat')?.props['aria-label'] === '工作树')
-check('chip shows its value', chipText.includes('当前工作区'), chipText.slice(0, 200))
+check('chip shows its value', chipText.includes('当前工作树'), chipText.slice(0, 200))
 // Closed by default, and defaulting to the project's own directory rather than
 // to a worktree: that is where a session starts unless one is asked for.
-check('chip defaults to the current workspace', chipText.includes('当前工作区'), chipText.slice(0, 200))
+check('chip defaults to the current worktree', chipText.includes('当前工作树'), chipText.slice(0, 200))
 check('chip is collapsed until asked', findByClass(chip, 'gord-dsh-worktree-option') === undefined)
 // With no row to attach to (no DOM here) the control renders in place rather
 // than vanishing; the portal itself is verified against the live shell.
@@ -576,10 +594,10 @@ check(
 const openedText = textsOf(chipOpen).join(' ')
 const openedOptions = findOptions(chipOpen)
 check('menu offers exactly two entries', openedOptions.length === 2, JSON.stringify(openedOptions.map((o) => textsOf(o).join(' '))))
-check('menu offers the current workspace', openedText.includes('当前工作区'), openedText.slice(0, 240))
+check('menu offers the current worktree', openedText.includes('当前工作树'), openedText.slice(0, 240))
 check('menu offers to create a worktree', openedText.includes('新建工作树'), openedText.slice(0, 240))
 check('menu does not list existing worktrees', !openedText.includes('app-worktrees'), openedText.slice(0, 240))
-check('the current workspace is the marked entry', findByClass(chipOpen, 'gord-dsh-worktree-option-active') !== undefined)
+check('the current worktree is the marked entry', findByClass(chipOpen, 'gord-dsh-worktree-option-active') !== undefined)
 
 // Choosing the current workspace is a no-op: the session already targets it,
 // so nothing should be adopted and no session created.
@@ -591,9 +609,9 @@ const sessionsBeforeLocal = createdSessions.length
 localOption?.props.onClick()
 const chipAfterLocal = await renderChip()
 const localCalls = calls.slice(callsBeforeLocal)
-check('choosing the current workspace closes the menu', findByClass(chipAfterLocal, 'gord-dsh-worktree-option') === undefined)
-check('choosing the current workspace adopts nothing', !localCalls.some((call) => call.action === 'adopt'), JSON.stringify(localCalls.map((c) => c.action)))
-check('choosing the current workspace starts no session', createdSessions.length === sessionsBeforeLocal, JSON.stringify(createdSessions.slice(sessionsBeforeLocal)))
+check('choosing the current worktree closes the menu', findByClass(chipAfterLocal, 'gord-dsh-worktree-option') === undefined)
+check('choosing the current worktree adopts nothing', !localCalls.some((call) => call.action === 'adopt'), JSON.stringify(localCalls.map((c) => c.action)))
+check('choosing the current worktree starts no session', createdSessions.length === sessionsBeforeLocal, JSON.stringify(createdSessions.slice(sessionsBeforeLocal)))
 
 process.stdout.write('\ncomposer chip: dismissal\n')
 // Reopen and prove the ways out the core selectors also honour.
@@ -632,15 +650,23 @@ const chipOpen2 = await renderChip()
 check('chip offers a new-worktree entry', findButton(chipOpen2, '新建工作树') !== undefined, textsOf(chipOpen2).join(' ').slice(0, 240))
 findButton(chipOpen2, '新建工作树')?.props.onClick()
 const formOpen = await renderChip()
-check('chip new-worktree form takes a branch', findInput(formOpen, '分支名') !== undefined)
-check('chip new-worktree form takes a base', findInput(formOpen, '起点') !== undefined)
+check('chip new-worktree form takes a branch', findInput(formOpen, '自动生成') !== undefined)
+// The base is picked, not typed: a branch name is one choice out of many, and
+// a free-text field invited typos that only failed once git was called.
+const baseSelect = findSelect(formOpen)
+check('chip new-worktree form offers a base dropdown', baseSelect !== undefined)
+check('base dropdown defaults to the current branch', baseSelect?.props.value === '', JSON.stringify(baseSelect?.props.value))
+const baseLabels = (baseSelect?.children ?? []).map((option) => option.children.join(''))
+check('base dropdown names the current branch first', String(baseLabels[0]).includes('当前分支（main）'), JSON.stringify(baseLabels.slice(0, 3)))
+check('base dropdown lists the local branches', baseLabels.includes('main'), JSON.stringify(baseLabels))
+check('base dropdown lists remote-tracking branches', baseLabels.includes('origin/main'), JSON.stringify(baseLabels))
 // `findInput` returns the `<input>` node, whose handler takes a DOM event;
 // `Field` unwraps it before calling the chip's value-based onChange.
-findInput(formOpen, '分支名')?.props.onChange({ target: { value: 'colleague/feature' } })
+findInput(formOpen, '自动生成')?.props.onChange({ target: { value: 'colleague/feature' } })
 const typed = await renderChip()
 // Re-read the input from the re-rendered tree: the handler closes over the old
 // form object, so a stale node would overwrite the branch on the next commit.
-findInput(typed, '分支名')?.props.onChange({ target: { value: 'colleague/feature' } })
+findInput(typed, '自动生成')?.props.onChange({ target: { value: 'colleague/feature' } })
 const typed2 = await renderChip()
 const createButton = findButton(typed2, '创建')
 check('chip submits the create', createButton !== undefined, textsOf(typed).join(' ').slice(0, 300))
@@ -648,17 +674,22 @@ createButton?.props.onClick()
 const created = await renderChip()
 check('chip posts the create to the host', calls.some((call) => call.action === 'create'), JSON.stringify(calls.map((c) => c.action)))
 check('chip reports the remote pickup', textsOf(created).join(' ').includes('已从 origin/colleague/feature 拉取'), textsOf(created).join(' ').slice(-300))
-// Creating a worktree is only half the action: the new directory has to become
-// a workspace and a session has to start in it, or the user is left in the old
-// checkout wondering where the worktree went.
+// Creating a worktree must not move the user. A worktree is a second checkout
+// of the same project, not a second project: registering it as a workspace put
+// a new entry in the sidebar, and opening a session in it moved the
+// conversation out from under whoever asked for the checkout. The session is
+// left exactly where it was, and only the created path is reported.
+const createCalls = calls.filter((call) => call.action === 'create')
+check('the create carried the typed branch', createCalls.at(-1)?.body.branch === 'colleague/feature', JSON.stringify(createCalls.at(-1)?.body))
+check('the create carried the chosen base', createCalls.at(-1)?.body.base === '', JSON.stringify(createCalls.at(-1)?.body))
 check(
-  'creating adopts the new worktree as a workspace',
-  calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/new'),
+  'creating registers no workspace',
+  !calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/new'),
   JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
 )
-const createdHere = createdSessions.at(-1)
-check('creating starts a session in the new worktree', createdHere?.cwd === '/tmp/demo/app-worktrees/new', JSON.stringify(createdSessions))
-check('creating opens that session', openedSessions.includes(createdHere?.sessionId), JSON.stringify({ opened: openedSessions, created: createdHere }))
+check('creating starts no session', createdSessions.length === sessionsBeforeLocal, JSON.stringify(createdSessions.slice(sessionsBeforeLocal)))
+check('creating opens no session', openedSessions.length === 0, JSON.stringify(openedSessions))
+check('creating reports where the worktree landed', textsOf(created).join(' ').includes('已创建 /tmp/demo/app-worktrees/new'), textsOf(created).join(' ').slice(-300))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')
