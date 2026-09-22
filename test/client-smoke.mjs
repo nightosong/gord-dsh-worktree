@@ -109,7 +109,16 @@ function resolve(node) {
     const rendered = node.type({ ...node.props, children: node.children })
     return resolve(rendered)
   }
-  return { type: node.type, props: node.props, children: node.children.map(resolve).filter((child) => child !== null) }
+  const element = { type: node.type, props: node.props, children: node.children.map(resolve).filter((child) => child !== null) }
+  // React attaches refs to host elements at commit time; without this the
+  // chip's containment check would always see a null ref and the dismissal
+  // paths could not be tested at all. The stub answers `contains` from the
+  // marker the test puts on the event target.
+  const ref = node.props?.ref
+  if (ref !== null && typeof ref === 'object' && 'current' in ref) {
+    ref.current = { contains: (target) => target?.insideControl === true }
+  }
+  return element
 }
 
 /** Collect every string rendered anywhere in a tree. */
@@ -202,7 +211,23 @@ globalThis.window = {
   },
   navigator: { language: 'zh-CN' },
 }
-globalThis.document = { createElement: () => ({ dataset: {}, remove() {} }), head: { appendChild() {} } }
+// The chip registers dismissal listeners on `document`; the stub records them
+// so a test can fire the same events the browser would.
+const documentListeners = new Map()
+globalThis.document = {
+  createElement: () => ({ dataset: {}, remove() {} }),
+  head: { appendChild() {} },
+  addEventListener(type, handler) {
+    if (!documentListeners.has(type)) documentListeners.set(type, new Set())
+    documentListeners.get(type).add(handler)
+  },
+  removeEventListener(type, handler) {
+    documentListeners.get(type)?.delete(handler)
+  },
+}
+const fireDocument = (type, event) => {
+  for (const handler of documentListeners.get(type) ?? []) handler(event)
+}
 
 const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 // eslint-disable-next-line no-eval -- the bundle is a browser script, not a module
@@ -551,6 +576,35 @@ check(
 check('selecting opens a session rooted in that worktree', createdSessions[0]?.cwd === '/tmp/demo/app-worktrees/feat', JSON.stringify(createdSessions))
 check('the created session is opened', openedSessions.includes(createdSessions[0]?.sessionId), JSON.stringify(openedSessions))
 check('selecting collapses the menu', findByClass(chipAfterOpen, 'gord-dsh-worktree-option') === undefined)
+
+process.stdout.write('\ncomposer chip: dismissal\n')
+// Reopen and prove the ways out the core selectors also honour.
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
+const reopened = await renderChip()
+check('menu reopens for the dismissal checks', findByClass(reopened, 'gord-dsh-worktree-option') !== undefined)
+// A pointer inside the control must NOT close it, or the create form could
+// never be filled in.
+fireDocument('pointerdown', { target: { nodeType: 1, insideControl: true } })
+const afterInside = await renderChip()
+check('a pointer inside the control keeps the menu open', findByClass(afterInside, 'gord-dsh-worktree-option') !== undefined)
+// A pointer anywhere else closes it.
+fireDocument('pointerdown', { target: { nodeType: 1, insideControl: false } })
+const afterOutside = await renderChip()
+check('clicking outside closes the menu', findByClass(afterOutside, 'gord-dsh-worktree-option') === undefined)
+// Escape closes it too.
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
+check('menu is open before escape', findByClass(await renderChip(), 'gord-dsh-worktree-option') !== undefined)
+fireDocument('keydown', { key: 'Escape' })
+const afterEscape = await renderChip()
+check('escape closes the menu', findByClass(afterEscape, 'gord-dsh-worktree-option') === undefined)
+// A key that is not Escape must leave it open.
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
+await renderChip()
+fireDocument('keydown', { key: 'a' })
+check('other keys leave the menu open', findByClass(await renderChip(), 'gord-dsh-worktree-option') !== undefined)
+// Leave it closed: the next block opens it itself.
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
+check('menu closed before the next block', findByClass(await renderChip(), 'gord-dsh-worktree-option') === undefined)
 
 process.stdout.write('\ncomposer chip: new worktree\n')
 // Picking a worktree collapses the popover, so it is reopened here rather than

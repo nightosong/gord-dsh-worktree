@@ -37,6 +37,11 @@ A session's directory is fixed when it is created, so this control cannot retarg
 choosing a worktree registers it as a workspace and **opens a session there**, the same model the core
 workspace picker uses. It is therefore shown only while the addressed session is still blank.
 
+The menu dismisses on a pointer anywhere outside the control and on Escape (which also returns focus to
+the trigger). The core selectors get that from the shared `Menu` primitive; this one cannot use it,
+because the create flow needs a form inside the panel while `Menu` items are a flat `{id, label}` list,
+so the behaviour is reproduced directly.
+
 It sits on the Hero's own working-location row, beside the workspace and preset controls, and is styled
 to match them exactly: the same borderless 16px-radius pill, the same 13px/500 type, the same shared
 chevron and icon package. The icons come from `@deepseek-ai/dsh-client-ui-primitives`, which is
