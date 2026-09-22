@@ -34,8 +34,13 @@ the result then carries `shadowedRemote` so the ambiguity is visible.
 ## Working location for a New Session
 
 A session's directory is fixed when it is created, so this control cannot retarget a running session:
-choosing a worktree registers it as a workspace and **opens a session there**, the same model the core
+creating a worktree registers it as a workspace and **opens a session there**, the same model the core
 workspace picker uses. It is therefore shown only while the addressed session is still blank.
+
+The menu offers exactly two entries: **Current workspace**, where a session starts unless you ask
+otherwise, and **New worktree**. Existing worktrees are deliberately not listed — creating one makes it
+a workspace, so it is already reachable from the workspace picker beside this control, and listing it
+twice would offer the same choice from two places.
 
 The menu dismisses on a pointer anywhere outside the control and on Escape (which also returns focus to
 the trigger). The core selectors get that from the shared `Menu` primitive; this one cannot use it,

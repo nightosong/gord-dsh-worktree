@@ -154,6 +154,22 @@ function findButton(node, label) {
   return undefined
 }
 
+/** Every option row in a rendered menu, in document order. */
+function findOptions(node) {
+  const found = []
+  const walk = (current) => {
+    if (current === null || current === undefined || typeof current !== 'object') return
+    if (Array.isArray(current)) {
+      current.forEach(walk)
+      return
+    }
+    if (typeof current.props?.className === 'string' && current.props.className.includes('gord-dsh-worktree-option')) found.push(current)
+    current.children.forEach(walk)
+  }
+  walk(node)
+  return found
+}
+
 /** Find the first node whose className contains `needle`. */
 function findByClass(node, needle) {
   if (node === null || node === undefined || typeof node !== 'object') return undefined
@@ -554,28 +570,30 @@ check(
   calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
   JSON.stringify(calls.map((c) => c.action + ':' + (c.body.dir || ''))),
 )
-// The menu is the two-option list the control promises: the local workspace,
-// the other worktrees, and the create entry — not a panel of prose.
+// The menu is exactly two entries: where a session starts, and how to start
+// one somewhere else. Other worktrees of the project are workspaces in their
+// own right once created, so they belong to the workspace picker, not here.
 const openedText = textsOf(chipOpen).join(' ')
+const openedOptions = findOptions(chipOpen)
+check('menu offers exactly two entries', openedOptions.length === 2, JSON.stringify(openedOptions.map((o) => textsOf(o).join(' '))))
 check('menu offers the current workspace', openedText.includes('当前工作区'), openedText.slice(0, 240))
-check('menu offers the other worktree', openedText.includes('/tmp/demo/app-worktrees/feat'), openedText.slice(0, 240))
 check('menu offers to create a worktree', openedText.includes('新建工作树'), openedText.slice(0, 240))
-// The main worktree is the local directory already offered above; listing it
-// twice would be a duplicate choice.
-check('menu does not repeat the main worktree', (openedText.match(/\/tmp\/demo\/app(?![\w-])/g) || []).length <= 2, openedText.slice(0, 300))
+check('menu does not list existing worktrees', !openedText.includes('app-worktrees'), openedText.slice(0, 240))
+check('the current workspace is the marked entry', findByClass(chipOpen, 'gord-dsh-worktree-option-active') !== undefined)
 
-const openHere = findButton(chipOpen, 'feat')
-check('chip offers to open a worktree', openHere !== undefined, textsOf(chipOpen).join(' ').slice(0, 200))
-openHere?.props.onClick()
-const chipAfterOpen = await renderChip()
-check(
-  'selecting adopts the worktree as a workspace',
-  calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/feat'),
-  JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
-)
-check('selecting opens a session rooted in that worktree', createdSessions[0]?.cwd === '/tmp/demo/app-worktrees/feat', JSON.stringify(createdSessions))
-check('the created session is opened', openedSessions.includes(createdSessions[0]?.sessionId), JSON.stringify(openedSessions))
-check('selecting collapses the menu', findByClass(chipAfterOpen, 'gord-dsh-worktree-option') === undefined)
+// Choosing the current workspace is a no-op: the session already targets it,
+// so nothing should be adopted and no session created.
+const localOption = openedOptions[0]
+// Scope the assertions to this action: earlier sections have already used the
+// same call log, so an unscoped check would read their traffic as this one's.
+const callsBeforeLocal = calls.length
+const sessionsBeforeLocal = createdSessions.length
+localOption?.props.onClick()
+const chipAfterLocal = await renderChip()
+const localCalls = calls.slice(callsBeforeLocal)
+check('choosing the current workspace closes the menu', findByClass(chipAfterLocal, 'gord-dsh-worktree-option') === undefined)
+check('choosing the current workspace adopts nothing', !localCalls.some((call) => call.action === 'adopt'), JSON.stringify(localCalls.map((c) => c.action)))
+check('choosing the current workspace starts no session', createdSessions.length === sessionsBeforeLocal, JSON.stringify(createdSessions.slice(sessionsBeforeLocal)))
 
 process.stdout.write('\ncomposer chip: dismissal\n')
 // Reopen and prove the ways out the core selectors also honour.
@@ -630,6 +648,17 @@ createButton?.props.onClick()
 const created = await renderChip()
 check('chip posts the create to the host', calls.some((call) => call.action === 'create'), JSON.stringify(calls.map((c) => c.action)))
 check('chip reports the remote pickup', textsOf(created).join(' ').includes('已从 origin/colleague/feature 拉取'), textsOf(created).join(' ').slice(-300))
+// Creating a worktree is only half the action: the new directory has to become
+// a workspace and a session has to start in it, or the user is left in the old
+// checkout wondering where the worktree went.
+check(
+  'creating adopts the new worktree as a workspace',
+  calls.some((call) => call.action === 'adopt' && call.body.path === '/tmp/demo/app-worktrees/new'),
+  JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
+)
+const createdHere = createdSessions.at(-1)
+check('creating starts a session in the new worktree', createdHere?.cwd === '/tmp/demo/app-worktrees/new', JSON.stringify(createdSessions))
+check('creating opens that session', openedSessions.includes(createdHere?.sessionId), JSON.stringify({ opened: openedSessions, created: createdHere }))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')
