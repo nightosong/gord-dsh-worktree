@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import * as service from '../lib/service.js'
-import { defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode } from '../lib/worktree.js'
+import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode } from '../lib/worktree.js'
 
 let failures = 0
 let checks = 0
@@ -58,6 +58,20 @@ try {
   check('default parent is outside the repository', !defaultWorktreeParent().startsWith(process.cwd()), defaultWorktreeParent())
   check('worktree codes are eight hex characters', /^[0-9a-f]{8}$/.test(worktreeCode()), worktreeCode())
   check('worktree codes do not repeat', worktreeCode() !== worktreeCode())
+  // Regression: a path that does not exist has no canonical form of its own, so
+  // the deepest existing ancestor decides. Without this the two spellings of one
+  // deleted directory never compare equal.
+  check('canonicalSpelling resolves an existing path', canonicalSpelling(scratch) === scratch, canonicalSpelling(scratch))
+  check(
+    'canonicalSpelling canonicalizes through a missing leaf',
+    canonicalSpelling(join(scratch, 'absent')) === join(scratch, 'absent'),
+    canonicalSpelling(join(scratch, 'absent')),
+  )
+  check(
+    'canonicalSpelling unifies two spellings of one missing path',
+    canonicalSpelling('/tmp/gord-absent') === canonicalSpelling('/private/tmp/gord-absent'),
+    `${canonicalSpelling('/tmp/gord-absent')} vs ${canonicalSpelling('/private/tmp/gord-absent')}`,
+  )
   check('slugifyBranch flattens slashes', slugifyBranch('worktree/feature/x') === 'worktree-feature-x', slugifyBranch('worktree/feature/x'))
   check('the default parent ignores the repository', defaultWorktreeParent() === join(scratch, 'worktree'), defaultWorktreeParent())
   const parsed = parseWorktreeList(git(repo, 'worktree', 'list', '--porcelain'))
@@ -210,6 +224,32 @@ try {
 
   const pruned = await registered.get('worktree_prune').execute({ dryRun: true, workdir: repo }, exec)
   check('worktree_prune supports a dry run', pruned.dryRun === true && typeof pruned.output === 'string')
+
+  // The stale-record guard has to survive the other spelling of the same path.
+  // macOS reaches `/var/folders/…` through `/private/var/folders/…`, and a guard
+  // comparing canonical paths literally misses exactly here — the recorded path
+  // is canonical, the caller's is not, and both name a directory that is gone.
+  // The user then gets git's raw refusal instead of being told to prune.
+  process.stdout.write('\nstale record under a symlinked spelling\n')
+  const staleSym = await service.createWorktree({ dir: repo, branch: 'worktree/stale-sym', base: 'main' })
+  check('create ok for the stale-spelling case', staleSym.ok === true, JSON.stringify(staleSym))
+  rmSync(staleSym.path, { recursive: true, force: true })
+  const staleRetry = await service.createWorktree({
+    dir: repo,
+    branch: 'worktree/stale-sym',
+    base: 'main',
+    path: staleSym.path.replace('/private/var/', '/var/'),
+  })
+  check(
+    'the stale guard fires through the symlinked spelling',
+    staleRetry.ok === false && staleRetry.error === 'stale-record',
+    JSON.stringify(staleRetry),
+  )
+  check(
+    'the stale guard names the fix',
+    String(staleRetry.message).includes('worktree_prune'),
+    String(staleRetry.message),
+  )
 
   // The panel's create route must not register a workspace. It used to, and the
   // damage was invisible to the unit tests and to the client tests: the route
