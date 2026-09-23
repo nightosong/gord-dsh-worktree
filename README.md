@@ -22,6 +22,8 @@ parallel work in its own directory and branch, from the agent or from Settings.
 - **Changes tab** — the right sidebar's *Changes* tab: the uncommitted diff of the session's own
   directory, file by file, with per-file counts and the patch. It follows a session into a worktree
   without being told it did, because it asks about that session's directory rather than a fixed one.
+- **Double-click a session to rename it** — the sidebar row opens the same rename dialog its menu
+  does, without the hover and the two clicks. Needs the sidebar patch below.
 - **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
   checks that remote branch out from its real commit and sets it as upstream. If you name a base
   anyway, the shadowed remote is reported rather than silently ignored.
@@ -71,35 +73,44 @@ in appears in the sidebar beside the project, titled by its directory code, exac
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
-### Showing a worktree under its project
+### The sidebar patch: nesting, and double-click to rename
 
-The worktree's sessions can be shown under the project's own group, one level in from where they land
-by default. This needs a patch to DSH, and the patch is in this repository:
+Two things the sidebar should do and does not: show a worktree's sessions under the project they were
+cut from, and rename a session by double-clicking its row. Both are patched into DSH by this
+repository:
 
 ```sh
 npm run patch:sidebar     # then restart dsh web
 npm run unpatch:sidebar   # to restore the shipped bundle
 ```
 
-It changes one small function — `groupByWorkspace`, the whole of the sidebar's grouping — so a worktree's
-sessions fold into the project's group and the worktree stops being a group of its own. That is how Codex
-reads, and for the same reason: it groups threads by project and treats the worktree as a thread
-attribute, while DSH's grouping key is the directory and its records have no parent field. Two rules
-decide the parent: a workspace whose directory is inside another's, and a parent map this plugin
+**Nesting** changes one small function — `groupByWorkspace`, the whole of the sidebar's grouping — so a
+worktree's sessions fold into the project's group and the worktree stops being a group of its own. That
+is how Codex reads, and for the same reason: it groups threads by project and treats the worktree as a
+thread attribute, while DSH's grouping key is the directory and its records have no parent field. Two
+rules decide the parent: a workspace whose directory is inside another's, and a parent map this plugin
 publishes for worktrees kept outside the project — which is the default, `$DSH_HOME/worktree/<code>`.
 The map is read from `localStorage` because the first render after a reload already needs the answer and
 a fetch would land too late.
 
-Why a patch and not the plugin: a client plugin can only nest by taking over the whole
+**Double-click to rename** adds one prop to the session row, calling the handler the row's own menu
+already calls — so the dialog, its validation and its error text are core's, not a second copy of them.
+Blank sessions are skipped, matching that menu, which hides its actions for them: a blank session has no
+title to edit yet (the dialog would open empty) and the first message names it afterwards, so the edit
+would be overwritten rather than kept.
+
+Why patches and not the plugin: a client plugin can only nest by taking over the whole
 `sidebar.workspaces` slot, which is `single` and owns the section header, the search box, every session
 row and every workspace dialog — 14 components, with drag reordering, rename, archive and fork. Taking it
 over would mean reimplementing all of it and drifting from core on every release. The grouping function
-is a dozen lines.
+is a dozen lines, and the rename hook is one prop.
 
 **A DSH upgrade replaces the file, so re-run `npm run patch:sidebar` after one.** The script is
 idempotent, keeps the shipped bundle at `client.js.orig` before the first patch, and refuses to guess if
-the function is not in the shape it expects — a newer DSH needs the patch updated rather than forced.
-`npm run patch:sidebar -- --check` reports whether a bundle is patched and exits non-zero when it is not.
+the code is not in the shape it expects — a newer DSH needs the patch updated rather than forced. Each
+patch carries its own marker, so an install that already has one still receives the other, and a patch
+is only written once every replacement it needs has been found. `npm run patch:sidebar -- --check` prints
+one line per patch and exits non-zero unless all of them are applied.
 
 ### Keeping the sidebar clean
 

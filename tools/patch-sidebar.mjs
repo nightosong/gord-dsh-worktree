@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Show a worktree's sessions under the project they were cut from.
+ * The two sidebar behaviours this plugin needs from a core it does not own:
+ * nested worktree grouping, and double-click on a session row to rename it.
  *
  * DSH's sidebar groups by workspace — one group per directory — and its records
  * carry no parent field, so a worktree is a group of its own whether or not it
@@ -15,8 +16,11 @@
  * is covered by a parent map the plugin publishes, read from localStorage so it
  * is available synchronously on the very first render after a reload.
  *
- * Idempotent, and reversible with `--revert`. A DSH upgrade restores the
- * original file, so re-run this after one.
+ * Each patch carries its own marker, so an install that already has one of
+ * them still receives the other; a single marker would have made the second
+ * patch invisible to everyone who had run the first. Idempotent, and
+ * reversible with `--revert`. A DSH upgrade restores the original file, so
+ * re-run this after one.
  *
  * Usage:
  *   node tools/patch-sidebar-grouping.mjs [--target <client.js>] [--revert] [--check]
@@ -106,9 +110,53 @@ const ACCOUNT_PATCHED = `function owningGroupKey(workspaces, sessionId) {
 			return (projectWorkspace(workspaces, owner) ?? owner).workspaceId;
 		}`
 
-const REPLACEMENTS = [
-  { original: ORIGINAL, patched: PATCHED, what: 'the workspace grouping' },
-  { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
+const RENAME_MARKER = 'gord-dsh-worktree: double-click a session to rename it'
+
+const ROW_ORIGINAL = `					role: "treeitem",
+					"aria-selected": selected,
+					onClick: () => {
+						onOpen(node.id);
+					},`
+
+const ROW_PATCHED = `					role: "treeitem",
+					"aria-selected": selected,
+					onClick: () => {
+						onOpen(node.id);
+					},
+					// ${RENAME_MARKER}
+					//
+					// The row's own menu already offers Rename, but reaching it
+					// costs a hover and two clicks, and a title is the one thing
+					// about a session worth fixing on sight. Blank sessions are
+					// skipped to match that menu, which hides its actions for them:
+					// their title is provisional until the first message names
+					// them, so an edit there would be overwritten rather than kept.
+					onDoubleClick: () => {
+						if (row.blank || onRename === void 0) return;
+						onRename(node.id, row.title);
+					},`
+
+/**
+ * One behaviour, its marker, and the replacements that install it.
+ *
+ * A group is the unit of idempotence: it is applied when its marker is absent,
+ * so adding a group to this file still reaches an install that already carries
+ * the others.
+ */
+const GROUPS = [
+  {
+    marker: MARKER,
+    what: 'nested worktree grouping',
+    replacements: [
+      { original: ORIGINAL, patched: PATCHED, what: 'the workspace grouping' },
+      { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
+    ],
+  },
+  {
+    marker: RENAME_MARKER,
+    what: 'double-click to rename a session',
+    replacements: [{ original: ROW_ORIGINAL, patched: ROW_PATCHED, what: 'the session row' }],
+  },
 ]
 
 const argv = process.argv.slice(2)
@@ -164,16 +212,19 @@ if (target === undefined || !existsSync(target)) {
 
 const backup = `${target}.orig`
 const source = readFileSync(target, 'utf8')
-const patched = source.includes(MARKER)
+const pending = GROUPS.filter((group) => !source.includes(group.marker))
 
 if (flag('--check')) {
-  process.stdout.write(`${patched ? 'patched' : 'original'}: ${target}\n`)
-  process.exit(patched ? 0 : 2)
+  for (const group of GROUPS) {
+    process.stdout.write(`${source.includes(group.marker) ? 'patched ' : 'original'} ${group.what}\n`)
+  }
+  process.stdout.write(`${target}\n`)
+  process.exit(pending.length === 0 ? 0 : 2)
 }
 
 if (flag('--revert')) {
-  if (!patched) {
-    process.stdout.write(`nothing to revert: ${target} is not patched\n`)
+  if (pending.length === GROUPS.length) {
+    process.stdout.write(`nothing to revert: ${target} carries none of these patches\n`)
     process.exit(0)
   }
   if (!existsSync(backup)) {
@@ -185,12 +236,14 @@ if (flag('--revert')) {
   process.exit(0)
 }
 
-if (patched) {
+if (pending.length === 0) {
   process.stdout.write(`already patched: ${target}\n`)
   process.exit(0)
 }
 
-const missing = REPLACEMENTS.filter((entry) => !source.includes(entry.original))
+// Every replacement of every pending group is checked before any is written, so
+// a build that has moved on leaves the file untouched instead of half patched.
+const missing = pending.flatMap((group) => group.replacements).filter((entry) => !source.includes(entry.original))
 if (missing.length > 0) {
   for (const entry of missing) {
     process.stderr.write(`not in the expected shape: ${entry.what} at ${target}\n`)
@@ -203,7 +256,9 @@ if (missing.length > 0) {
 // than a previous patch of ours.
 if (!existsSync(backup)) copyFileSync(target, backup)
 let next = source
-for (const entry of REPLACEMENTS) next = next.replace(entry.original, entry.patched)
+for (const group of pending) {
+  for (const entry of group.replacements) next = next.replace(entry.original, entry.patched)
+}
 writeFileSync(target, next)
-process.stdout.write(`patched ${target}\n`)
+for (const group of pending) process.stdout.write(`patched ${group.what}\n`)
 process.stdout.write(`restart dsh web for the sidebar to pick it up\n`)
