@@ -564,25 +564,38 @@ try {
   }, ['session-gone', 'session-live'])
   check('a live session is skipped, not deleted', JSON.stringify(deletion.skipped) === JSON.stringify([{ id: 'session-live', reason: 'live' }]), JSON.stringify(deletion))
   check('a skipped session stays archived', deleteRegistry.archivedSessionIds.includes('session-live'), JSON.stringify(deleteRegistry.state))
-  check('a deleted session leaves the archive', !deleteRegistry.archivedSessionIds.includes('session-gone'), JSON.stringify(deleteRegistry.state))
   check('the log directory is removed', !existsSync(sessionDir))
   check('the cache row is dropped', cacheDeletes.includes('session-gone'), JSON.stringify(cacheDeletes))
   check('the workspace membership is dropped', deleteRegistry.detached.includes('session-gone'), JSON.stringify(deleteRegistry.detached))
   check('the deletion is reported', deletion.deleted.join() === 'session-gone', JSON.stringify(deletion))
-
-  const archivedList = await archive.listArchived({
-    registry: fakeRegistry(['session-gone']),
+  // The tombstone: core cannot say "this Session is gone", so the only way to
+  // keep it out of the browser's Ungrouped bucket is to leave it archived.
+  check('a deleted session keeps its archive entry', deleteRegistry.archivedSessionIds.includes('session-gone'), JSON.stringify(deleteRegistry.state))
+  // A second session that still has a log, so the listing has something to show
+  // and the tombstone has something to be told apart from.
+  const keptDir = join(dshHomePath('sessions'), '--tmp-project--', 'session-kept')
+  mkdirSync(keptDir, { recursive: true })
+  writeFileSync(join(keptDir, 'session.v3.jsonl.zstd'), 'log')
+  const goneSet = await archive.tombstonedIds({}, ['session-gone', 'session-kept'])
+  check('a log-less id is tombstoned', goneSet.has('session-gone'), JSON.stringify([...goneSet]))
+  check('an id with a log is not tombstoned', !goneSet.has('session-kept'), JSON.stringify([...goneSet]))
+  const listingDeps = (ids) => ({
+    registry: fakeRegistry(ids),
     now: () => 1,
-    persistence: { list: async () => [{ header: { id: 'session-gone', cwd: '/tmp/project', createdAt: 42 } }] },
+    persistence: { list: async () => [{ header: { id: 'session-kept', cwd: '/tmp/project', createdAt: 42 } }] },
     cache: { cachedSnapshot: () => ({ values: { title: 'a title from the cache' } }) },
   })
+  const archivedList = await archive.listArchived(listingDeps(['session-kept', 'session-gone']))
   check('the listing reports the archived session', archivedList.ok === true && archivedList.records.length === 1, JSON.stringify(archivedList))
+  check('a session that still has a log is listed', archivedList.records.some((row) => row.id === 'session-kept'), JSON.stringify(archivedList.records.map((r) => r.id)))
+  check('a deleted session is tombstoned out of the listing', !archivedList.records.some((row) => row.id === 'session-gone'), JSON.stringify(archivedList.records.map((r) => r.id)))
+  check('the tombstone is not counted in the total either', archivedList.total === 1, String(archivedList.total))
   check('the listing carries the cached title', archivedList.records[0].title === 'a title from the cache', JSON.stringify(archivedList.records[0]))
   check('the listing carries the header date and cwd', archivedList.records[0].createdAt === 42 && archivedList.records[0].cwd === '/tmp/project', JSON.stringify(archivedList.records[0]))
   const untitled = await archive.listArchived({
-    registry: fakeRegistry(['session-gone']),
+    registry: fakeRegistry(['session-kept']),
     now: () => 1,
-    persistence: { list: async () => [{ header: { id: 'session-gone', cwd: '/tmp/project', createdAt: 42 } }] },
+    persistence: { list: async () => [{ header: { id: 'session-kept', cwd: '/tmp/project', createdAt: 42 } }] },
   })
   check('a session with no projection source still lists, without a title', untitled.records[0].title === undefined, JSON.stringify(untitled.records[0]))
   const noRegistryList = await archive.listArchived({ registry: undefined, now: () => 1 })

@@ -186,11 +186,19 @@ the session back in its original position, with no restart. Archiving only ever 
 moved or deleted.
 
 **Delete all** is the one irreversible control in the plugin. It removes each listed session's log
-directory, its cached projections, its archive entry and its workspace membership, behind a
-confirmation that names the count. It sends back the exact ids it listed rather than a "delete
+directory, its cached projections and its workspace membership, behind a confirmation that names the
+count. **Each row has the same delete as an icon**, for the far more common case of one session
+archived by mistake rather than ninety. Both send back the exact ids they listed rather than a "delete
 everything" flag, so a session archived between the listing and the click is never swept up. A session
 that is still live is skipped and reported, instead of having its log pulled out from under a running
 agent.
+
+The archive entry is the one thing deletion keeps. Core's only switch for "do not show this Session"
+is the archive set — `sessionVisible` consults it on every render — and core cannot express "this
+session is gone" at all. An id whose log is removed but which is left unarchived falls out of its
+workspace and into the browser's *Ungrouped* bucket, as an empty group that survives until the page is
+reloaded. Keeping the entry is what makes the session stay hidden, immediately and after every reload;
+the panel drops these ids from its own listing because there is nothing left to show.
 
 Archive *times* are not DSH's to give: the archive set is a bare id array with no timestamps anywhere.
 The plugin records them itself, in `$DSH_HOME/gord-dsh-worktree/archived-at.json`, from the moment it

@@ -1032,6 +1032,16 @@ const askedConfirm = await settle(props)
 check('delete-all asks first', textsOf(askedConfirm).join(' ').includes('确认永久删除这 3 个会话'), textsOf(askedConfirm).join(' ').slice(-320))
 check('the confirm states what is removed', textsOf(askedConfirm).join(' ').includes('无法恢复'))
 check('nothing is deleted before the confirm', calls.filter((call) => call.action === 'deleteArchived').length === beforeBulk)
+// Where the confirm renders is the whole bug: after the list it sits thousands
+// of pixels below the button that opened it, which is what "Delete all does
+// nothing" looked like on a real 93-row archive.
+const askedOrder = textsOf(askedConfirm).join(' ')
+check(
+  'delete-all asks above the list, not after it',
+  askedOrder.indexOf('确认永久删除这 3 个会话') !== -1
+    && askedOrder.indexOf('确认永久删除这 3 个会话') < askedOrder.indexOf('重构计费链路'),
+  `confirm at ${askedOrder.indexOf('确认永久删除这 3 个会话')}, first row at ${askedOrder.indexOf('重构计费链路')}`,
+)
 
 archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-ccc'], skipped: [] }
 const confirmButton = findButton(askedConfirm, '永久删除')
