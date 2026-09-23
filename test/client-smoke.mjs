@@ -5,7 +5,8 @@
  * recreates the two things it needs — `window.__ModuleLoader__.load` and a
  * React — and then drives a real render. The React here is deliberately
  * minimal (no reconciliation, no DOM): it provides `createElement` plus the
- * four hooks the panel uses, which is enough to prove the panel's data flow —
+ * five hooks the panel and the Changes tab use, which is enough to prove their
+ * data flow —
  * mount → fetch → render rows → mutate → refresh — instead of merely proving
  * the file parses.
  *
@@ -88,6 +89,16 @@ const React = {
     const index = cursor++
     if (!(index in slots)) slots[index] = { current: initial }
     return slots[index]
+  },
+  // Memoised by deps like the real hook, and not merely returned as-is: the
+  // Changes tab keys its loader effect on the callback's identity, so a fresh
+  // function every pass would re-run the fetch forever and never settle.
+  useCallback(fn, deps) {
+    const index = cursor++
+    const previous = slots[index]
+    const changed = previous === undefined || deps === undefined || deps.some((dep, i) => !Object.is(dep, previous.deps[i]))
+    if (changed) slots[index] = { deps, fn }
+    return slots[index].fn
   },
 }
 
@@ -307,6 +318,13 @@ let sectionSpec
 let Section
 let chipSpec
 let Chip
+/** Tab types the plugin registered into the right sidebar. */
+const tabTypes = []
+/** The Changes tab's two slot registrations, and the components they carry. */
+let diffTabSpec
+let DiffBody
+let diffTitleSpec
+let DiffTitle
 // A real cordis context, with both services provided by sibling plugin fibers —
 // the same topology the client shell uses. This is not decoration: reaching an
 // un-injected service as a property only throws when its provider is a sibling
@@ -318,6 +336,8 @@ const registeredDicts = []
 const createdSessions = []
 /** Session ids the chip asked the controller to select. */
 const openedSessions = []
+/** Slot names the plugin asked to inject into, in order. */
+const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
 const sessionList = {
   current: 's1',
@@ -363,6 +383,7 @@ root.plugin({
     serviceCtx.provide('slots', {
       inject(name, factory) {
         if (name === 'conversation.input.dock') chipSpec = { name, factory }
+        else if (name.startsWith('sidebar.right.')) sidebarSpecs.push(name)
         else sectionSpec = { name, factory }
         return factory()
       },
@@ -370,10 +391,26 @@ root.plugin({
         if (spec.name === 'conversation.input.dock') {
           chipSpec = { ...chipSpec, spec }
           Chip = component
+        } else if (spec.name === 'sidebar.right.pane.tab') {
+          diffTabSpec = { ...diffTabSpec, spec }
+          DiffBody = component
+        } else if (spec.name === 'sidebar.right.pane.tab.title') {
+          diffTitleSpec = { ...diffTitleSpec, spec }
+          DiffTitle = component
         } else {
           sectionSpec = { ...sectionSpec, spec }
           Section = component
         }
+        return () => {}
+      },
+    })
+    // The right sidebar's tab registry. A profile composed without this
+    // service is exactly the case the plugin's child-scope registration
+    // exists for, so the stub must be a real provider rather than an
+    // always-answering lookup.
+    serviceCtx.provide('sidebarRightTabs', {
+      register(definition) {
+        tabTypes.push(definition)
         return () => {}
       },
     })
@@ -416,6 +453,8 @@ const listing = {
     { path: '/tmp/demo/app-worktrees/feat', branch: 'worktree/feat', head: 'bbbbbbb', current: false, detached: false, locked: false, pruned: false },
   ],
 }
+/** Payload the fake host answers the `diff` action with; probes swap it. */
+let diffPayload = { ok: true, root: '/tmp/demo/app', branch: 'main', changed: 0, truncated: false, files: [] }
 const calls = []
 globalThis.fetch = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
@@ -424,7 +463,9 @@ globalThis.fetch = (url, options) => {
   const body = JSON.parse(options.body)
   calls.push({ action, body })
   const payload =
-    action === 'list'
+    action === 'diff'
+      ? diffPayload
+      : action === 'list'
       ? listing
       : action === 'create'
         ? {
@@ -718,6 +759,130 @@ check(
   JSON.stringify(calls.filter((c) => c.action === 'adopt').map((c) => c.body.path)),
 )
 check('creating reports where the worktree landed', textsOf(created).join(' ').includes('已创建 /tmp/demo/app-worktrees/new'), textsOf(created).join(' ').slice(-300))
+
+process.stdout.write('\nright-sidebar changes tab\n')
+check('the plugin registers one tab type', tabTypes.length === 1, JSON.stringify(tabTypes.map((type) => type.id)))
+check('the tab type keeps the package id', tabTypes[0]?.id === 'gord-dsh-worktree', String(tabTypes[0]?.id))
+check('the tab type carries its short kind', tabTypes[0]?.kind === 'worktree-diff', String(tabTypes[0]?.kind))
+check('the tab type names itself for the strip', tabTypes[0]?.title?.() === '变更', String(tabTypes[0]?.title?.()))
+const guide = tabTypes[0]?.guide ?? []
+check('the tab type offers one guide entry', guide.length === 1, JSON.stringify(guide.length))
+check('the guide entry is titled', guide[0]?.title?.() === '变更', String(guide[0]?.title?.()))
+check('the guide entry describes itself', guide[0]?.description?.() === '本会话工作区里未提交的改动', String(guide[0]?.description?.()))
+// The guide draws the glyph React renders; an undefined icon would throw on
+// the page that is supposed to be the way in.
+check('the guide entry has a renderable icon', typeof guide[0]?.icon === 'function', typeof guide[0]?.icon)
+check('the guide entry is ordered', typeof guide[0]?.order === 'number', String(guide[0]?.order))
+check('the tab body registers under the tab type key', diffTabSpec?.spec?.key === 'gord-dsh-worktree', JSON.stringify(diffTabSpec?.spec))
+check('the tab body declares the locale namespace', diffTabSpec?.spec?.locale === 'gord-worktree', String(diffTabSpec?.spec?.locale))
+check('the tab title registers under the same key', diffTitleSpec?.spec?.key === 'gord-dsh-worktree', JSON.stringify(diffTitleSpec?.spec))
+check('the tab body is a component', typeof DiffBody === 'function')
+check('the tab title is a component', typeof DiffTitle === 'function')
+check('both sidebar slots were injected', sidebarSpecs.includes('sidebar.right.pane.tab') && sidebarSpecs.includes('sidebar.right.pane.tab.title'), JSON.stringify(sidebarSpecs))
+
+/**
+ * Render the Changes body until it settles, as `settle` does for the panel.
+ *
+ * The hook store is *not* reset here: a click probe has to reach the same
+ * component instance it just interacted with, or its selection would be thrown
+ * away before it could be observed. `mountDiff` is what starts a fresh one.
+ */
+async function settleDiff(componentProps) {
+  let tree
+  for (let pass = 0; pass < 40; pass++) {
+    dirty = false
+    beginRender()
+    tree = resolve(DiffBody(componentProps))
+    for (const effect of pendingEffects.splice(0)) effect()
+    for (let flush = 0; flush < 4; flush++) await new Promise((resolve) => setImmediate(resolve))
+    if (!dirty) break
+  }
+  return tree
+}
+
+/**
+ * Start a fresh mount. Clearing the hook store also clears the stored effect
+ * deps, so the loader re-runs and the next probe sees the payload it swapped in.
+ */
+function mountDiff() {
+  slots = []
+  cleanups = {}
+}
+
+/** Props the slot supplies: the translator, the session, and its snapshot hook. */
+const diffProps = {
+  t: props.t,
+  sessionId: 's1',
+  useSessions: (selector) => selector(sessionList),
+}
+
+diffPayload = {
+  ok: true,
+  root: '/tmp/demo/app',
+  branch: 'worktree/feat',
+  changed: 2,
+  truncated: false,
+  files: [
+    {
+      path: 'src/app.ts',
+      code: '.M',
+      additions: 2,
+      deletions: 1,
+      patch: 'diff --git a/src/app.ts b/src/app.ts\nindex 1111111..2222222 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1,3 +1,4 @@\n keep\n-old\n+new\n+added\n',
+    },
+    {
+      path: 'docs/readme.md',
+      code: '??',
+      additions: 1,
+      deletions: 0,
+      patch: 'diff --git a/docs/readme.md b/docs/readme.md\nnew file mode 100644\n--- /dev/null\n+++ b/docs/readme.md\n@@ -0,0 +1 @@\n+fresh\n',
+    },
+  ],
+}
+
+mountDiff()
+const diffTree = await settleDiff(diffProps)
+const diffCalls = calls.filter((call) => call.action === 'diff')
+// The pane follows the session: the directory it asks about is the session's
+// own, which is what makes it work unchanged inside a worktree.
+check('the tab asks the host about the session directory', diffCalls.at(-1)?.body.dir === '/tmp/demo/app', JSON.stringify(diffCalls.at(-1)?.body))
+check('the tab renders both changed files', textsOf(diffTree).join('').includes('src/app.ts') && textsOf(diffTree).join('').includes('docs/readme.md'), textsOf(diffTree).join(' | ').slice(0, 200))
+check('the tab renders the file count', textsOf(diffTree).join(' ').includes('2 个文件'), textsOf(diffTree).join(' ').slice(0, 160))
+check('the tab totals the counts', textsOf(diffTree).join(' ').includes('+3 −1'), textsOf(diffTree).join(' ').slice(0, 160))
+check('the tab names the branch', textsOf(diffTree).join(' ').includes('worktree/feat'), textsOf(diffTree).join(' ').slice(0, 160))
+const patchText = textsOf(diffTree).join('\n')
+check('the tab renders the patch additions', patchText.includes('+new') && patchText.includes('+added'), patchText.slice(-160))
+check('the tab renders the patch removals', patchText.includes('-old'), patchText.slice(-160))
+check('the tab renders hunk headers', patchText.includes('@@ -1,3 +1,4 @@'), patchText.slice(-160))
+
+// Selecting another file has to swap the patch, not just the highlight.
+findButton(diffTree, 'readme.md')?.props.onClick()
+const secondFile = await settleDiff(diffProps)
+check('selecting a file swaps the patch', textsOf(secondFile).join('\n').includes('+fresh'), textsOf(secondFile).join('\n').slice(-160))
+check('selecting a file drops the old patch', !textsOf(secondFile).join('\n').includes('+added'), textsOf(secondFile).join('\n').slice(-160))
+
+mountDiff()
+diffPayload = { ok: true, root: '/tmp/demo/app', branch: 'main', changed: 0, truncated: false, files: [] }
+const cleanTree = await settleDiff(diffProps)
+check('a clean tree says so', textsOf(cleanTree).join(' ').includes('没有未提交的改动'), textsOf(cleanTree).join(' ').slice(0, 160))
+
+mountDiff()
+diffPayload = { ok: false, error: 'not-a-repository' }
+const notRepoTree = await settleDiff(diffProps)
+check('a directory outside a repository is explained', textsOf(notRepoTree).join(' ').includes('这个会话不在 git 仓库里'), textsOf(notRepoTree).join(' ').slice(0, 160))
+
+mountDiff()
+diffPayload = { ok: false, error: 'git-failed', message: 'boom' }
+const failedTree = await settleDiff(diffProps)
+check('a git failure carries its message', textsOf(failedTree).join(' ').includes('读取改动失败：boom'), textsOf(failedTree).join(' ').slice(0, 160))
+check('a failure offers a retry', findButton(failedTree, '刷新') !== undefined)
+
+// A session with no directory yet must not fetch, and must not crash.
+mountDiff()
+const beforeNoSession = calls.filter((call) => call.action === 'diff').length
+const noSessionTree = await settleDiff({ t: props.t, sessionId: 'missing', useSessions: (selector) => selector(sessionList) })
+check('a session without a directory fetches nothing', calls.filter((call) => call.action === 'diff').length === beforeNoSession)
+check('a session without a directory still renders', textsOf(noSessionTree).join(' ').includes('读取改动…'), textsOf(noSessionTree).join(' ').slice(0, 160))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

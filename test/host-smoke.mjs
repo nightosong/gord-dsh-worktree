@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { basename } from 'node:path'
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -393,6 +393,72 @@ try {
   const createTool = registered.get('worktree_create')
   check('worktree_create explains the mid-session flow', createTool.description.includes('workdir'), createTool.description.slice(-200))
   check('worktree_create says the session cannot be moved', createTool.description.includes('cannot be moved'), createTool.description.slice(-200))
+
+  // The Changes tab answers with the working tree against HEAD, so these probes
+  // are about the shapes a real working tree can be in — a rename is not an
+  // addition, a binary file has no hunks, a clean tree is empty — rather than
+  // about the route's plumbing.
+  process.stdout.write('\ndiff of uncommitted changes\n')
+  const changes = join(scratch, 'changes')
+  execFileSync('git', ['init', '--initial-branch=main', changes], { encoding: 'utf8' })
+  git(changes, 'config', 'user.email', 'test@example.com')
+  git(changes, 'config', 'user.name', 'test')
+  writeFileSync(join(changes, 'modify.txt'), 'one\ntwo\nthree\n')
+  writeFileSync(join(changes, 'delete.txt'), 'gone\n')
+  writeFileSync(join(changes, 'rename-old.txt'), 'moved\n')
+  writeFileSync(join(changes, 'bin.dat'), Buffer.from([0, 1, 2, 0, 3]))
+  mkdirSync(join(changes, 'sub'))
+  writeFileSync(join(changes, 'sub', 'nested.txt'), 'nested\n')
+  execFileSync('git', ['-C', changes, 'add', '.'], { encoding: 'utf8' })
+  git(changes, 'commit', '-m', 'init')
+
+  const cleanDiff = await service.diffChanges(changes)
+  check('a clean tree reports no files', cleanDiff.ok === true && cleanDiff.files.length === 0, JSON.stringify(cleanDiff))
+  check('a clean tree still names its branch', cleanDiff.branch === 'main', cleanDiff.branch)
+
+  writeFileSync(join(changes, 'modify.txt'), 'one\nTWO\nthree\nfour\n')
+  writeFileSync(join(changes, 'fresh.txt'), 'brand new\n')
+  rmSync(join(changes, 'delete.txt'))
+  git(changes, 'mv', 'rename-old.txt', 'rename-new.txt')
+  writeFileSync(join(changes, 'bin.dat'), Buffer.from([0, 9, 9, 0, 3]))
+
+  const dirty = await service.diffChanges(changes)
+  const byPath = Object.fromEntries(dirty.files.map((file) => [file.path, file]))
+  check('every changed file is listed', dirty.changed === 5, JSON.stringify(dirty.files.map((file) => file.path)))
+  check('a modification carries both counts', byPath['modify.txt'].additions === 2 && byPath['modify.txt'].deletions === 1, JSON.stringify(byPath['modify.txt']))
+  check('an untracked file reads as an addition', byPath['fresh.txt'].code === '??' && byPath['fresh.txt'].additions === 1, JSON.stringify(byPath['fresh.txt']))
+  check('a deletion keeps its removed line', byPath['delete.txt'].code === '.D' && byPath['delete.txt'].deletions === 1, JSON.stringify(byPath['delete.txt']))
+  check('a rename says where it came from', byPath['rename-new.txt'].from === 'rename-old.txt', JSON.stringify(byPath['rename-new.txt']))
+  // Passing only the new path to `git diff` would report the moved file as
+  // freshly added — right content, wrong claim.
+  check('a pure rename is not counted as content', byPath['rename-new.txt'].additions === 0 && byPath['rename-new.txt'].deletions === 0, JSON.stringify(byPath['rename-new.txt']))
+  check('a binary file is flagged rather than diffed', byPath['bin.dat'].binary === true, JSON.stringify(byPath['bin.dat']))
+  check('the patch is a real unified diff', byPath['modify.txt'].patch.includes('@@ -1,3 +1,4 @@'), byPath['modify.txt'].patch.slice(0, 80))
+  check('the answer names the repository root', dirty.root === realpathSync(changes), dirty.root)
+  check('nothing was truncated at this size', dirty.truncated === false)
+
+  // A session's directory can be a subdirectory of the repository, and the
+  // answer has to be the whole repository's changes either way.
+  const nestedDiff = await service.diffChanges(join(changes, 'sub'))
+  check('a subdirectory resolves to the same root', nestedDiff.root === realpathSync(changes), nestedDiff.root)
+  check('a subdirectory sees the same changes', nestedDiff.changed === 5, nestedDiff.changed)
+
+  const outside = await service.diffChanges(scratch)
+  check('a directory outside any repository is reported', outside.ok === false && outside.error === 'not-a-repository', JSON.stringify(outside))
+
+  const routedDiff = await callApi('diff', { dir: changes })
+  check('the diff action answers over the route', routedDiff.ok === true && routedDiff.files.length === 5, JSON.stringify(routedDiff).slice(0, 160))
+  check('the routed diff carries patches', typeof routedDiff.files[0].patch === 'string' && routedDiff.files[0].patch.length > 0)
+
+  process.stdout.write('\ndiff helpers\n')
+  const statusEntries = service.parseStatus(' M a.txt\0R  new.txt\0old.txt\0?? fresh.txt\0')
+  check('status codes and paths are paired', statusEntries.length === 3, JSON.stringify(statusEntries))
+  check('a rename keeps its original path', statusEntries[1].from === 'old.txt' && statusEntries[1].path === 'new.txt', JSON.stringify(statusEntries[1]))
+  check('an untracked file is its own code', statusEntries[2].code === '??' && statusEntries[2].path === 'fresh.txt', JSON.stringify(statusEntries[2]))
+  const counted = service.patchCounts('--- a\n+++ b\n@@ -1 +1,2 @@\n-gone\n+kept\n+added\n')
+  check('counts ignore the file headers', counted.additions === 2 && counted.deletions === 1, JSON.stringify(counted))
+  check('an empty patch counts nothing', JSON.stringify(service.patchCounts('')) === '{"additions":0,"deletions":0}')
+
 } finally {
   rmSync(scratch, { recursive: true, force: true })
 }

@@ -19,6 +19,9 @@ parallel work in its own directory and branch, from the agent or from Settings.
   one-click **Open as workspace** so a new worktree becomes a sidebar workspace you can start a session in.
 
   ![The Worktrees settings page: repository, create form, and the worktree list with its actions](docs/images/worktree-settings.png)
+- **Changes tab** — the right sidebar's *Changes* tab: the uncommitted diff of the session's own
+  directory, file by file, with per-file counts and the patch. It follows a session into a worktree
+  without being told it did, because it asks about that session's directory rather than a fixed one.
 - **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
   checks that remote branch out from its real commit and sets it as upstream. If you name a base
   anyway, the shadowed remote is reported rather than silently ignored.
@@ -129,6 +132,26 @@ element with `createPortal`, which is how the core plugins place themselves insi
 not own. The row is found from this plugin's own host outward via the `conversation.hero.workspace`
 `data-slot` anchor, not by a document-wide query. If no row can be found the control renders in place
 rather than disappearing.
+
+## Reviewing changes in the sidebar
+
+The right sidebar's *Changes* tab shows the uncommitted diff of the session's own directory: every
+file that differs from `HEAD`, its status and line counts, and the selected file's patch with both
+line-number columns. It is the working tree against `HEAD` — staged and unstaged together — rather
+than the session's own edits, because what a person reviews before committing is what is on disk,
+whichever tool put it there: an agent's file edit, a formatter, or their own editor in the next
+window. The session's own edits are already diffed inline in the conversation, from the tools' own
+reports.
+
+A worktree is an ordinary repository to it. The tab asks the host about the directory the session
+runs in, so a session that moves into a worktree follows along without the tab being told it did.
+
+![The Changes tab: six changed files with statuses and counts, and the selected file's patch](docs/images/sidebar-changes-tab.png)
+
+It is registered through the same `sidebarRightTabs` registry the built-in file tree and document
+preview use, and both of its slots — the body and the tab title — are injected from a child scope, so
+a profile composed without the right sidebar loses the tab instead of failing to apply the plugin.
+Open it from the right sidebar's start page, where it is listed beside *Workspace files*.
 
 ## Renamed from `dsh-worktree`
 
