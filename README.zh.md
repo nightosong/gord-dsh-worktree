@@ -1,26 +1,41 @@
 # gord-dsh-worktree
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供 Git worktree 管理：把并行开发
-放进各自独立的目录与分支，Agent 和界面都能用。
+放进各自独立的目录与分支。
 
 [English](README.md)
 
 ## 功能
 
-- **Agent 工具** —— `worktree_list`、`worktree_create`、`worktree_status`、`worktree_remove`、
-  `worktree_prune`。Agent 可以为某个任务开一个隔离检出，而不是所有工作挤在同一个工作区里。
-- **设置页** —— *设置 → 工作树*：列出仓库的全部 worktree 及分支/HEAD 与「当前 / 游离 HEAD / 已锁定 /
-  记录失效」标记；提供新建表单（分支、起点、目录）、预演清理，以及一键 **用工作区打开**，把新 worktree
-  注册成侧栏工作区，直接在其中开会话。
-- **变更标签页** —— 右侧边栏的 *变更*：本会话所在目录的未提交改动，逐文件列出状态与增删行数，并显示
-  选中文件的补丁。它跟着会话走进 worktree 而无需被告知——问的是那个会话自己的目录，而不是某个固定目录。
-- **双击会话重命名** —— 双击侧栏里的会话行即可打开重命名弹窗，省掉悬停与两次点击。需要下面的侧栏补丁。
-- **归档，以及一条回头的路** —— 同一个设置页列出 DSH 已归档的全部会话，含标题、项目、时间与日志大小，
-  每条可 **取消归档** 或单独删除，整体可 **全部删除**。归档在 DSH 里是单向的：没有地方列出归档了什么，也没有地方撤销。
-- **不用手敲 git** —— 创建是一条原子的 `git worktree add -b`；目录默认放在 `$DSH_HOME/worktree/`，
-  在仓库之外，既不用往 `.gitignore` 里加东西，也不会被构建或搜索扫到。
+1. **创建工作树** —— 一条原子命令同时建好隔离检出与分支；Agent（`worktree_list`、`worktree_create`、
+   `worktree_status`、`worktree_remove`、`worktree_prune`）和 *设置 → 工作树* 都能建。
+2. **在 worktree 中开会话** —— 新会话行带工作位置选择器：留在当前工作树，或新建一个并直接在其中开会话。
+3. **查看改动 diff** —— 右侧边栏的 *变更* 标签页显示本会话所在目录的未提交改动：每个改动文件及其增删
+   行数，以及选中文件的补丁。
+4. **管理归档会话** —— *设置 → 工作树* 列出本机所有已归档的会话，每行可 **取消归档** 或单独删除，整体可
+   **全部删除**。
+5. **双击重命名** —— 直接双击侧栏的会话行重命名，不用走菜单。
 
-## 在侧栏里看改动
+![新会话行上的工作树选择器，展开态：当前工作树与新建工作树](docs/images/new-session-worktree-picker.png)
+
+![会话运行在 worktree 中，新会话行显示工作位置选择器](docs/images/session-in-worktree.png)
+
+![工作树设置页：仓库、新建表单、带操作的工作树列表，以及归档的会话卡片](docs/images/worktree-settings.png)
+
+## 安装
+
+```sh
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
+```
+
+然后重启 `dsh web`（bundle 进入层栈后重新加载即可），打开 **设置 → 工作树**。无需手工编辑任何 profile
+文件：包内声明了 `dsh.bundle.patch`，CLI 会自己把它加入 bundle 堆栈。
+
+需要 dsh `0.1.5-rc.1` 或更新版本。
+
+## 详细说明
+
+### 在侧栏里看改动
 
 右侧边栏的 *变更* 标签页显示本会话所在目录的未提交改动：与 `HEAD` 不同的每个文件、状态与增删行数，
 以及选中文件的补丁（含两侧行号栏）。它是**工作区对 `HEAD`** 的差异——暂存与未暂存一起——而不是会话
@@ -36,7 +51,7 @@
 在子 scope 里注入，因此没有组合右侧边栏的 profile 只是少一个标签页，而不会让整个插件 apply 失败。
 在右侧边栏的起始页里打开它，它和 *工作区文件* 并列。
 
-## 归档
+### 归档
 
 DSH 归档一个会话，就是往工作区注册表的某一个数组里塞一个 id，而它没有留回头的路：远端契约里只有
 一个归档方法、别无其他，CLI 完全不碰它，也没有任何界面列出归档了什么——整个客户端只带一条归档相
@@ -70,7 +85,7 @@ mtime。这才是「这个东西最后一次用是什么时候」的诚实答案
 起自己记，记在 `$DSH_HOME/gord-dsh-worktree/archived-at.json`，并用它把列表按「最近归档在前」排序。
 它**不**显示在行上是有意的：那是插件自己的记账，不是会话本身的事实，而一行一个时间比三个时间好读得多。
 
-## 侧栏补丁：嵌套与双击重命名
+### 侧栏补丁：嵌套与双击重命名
 
 侧栏有两件本该做而没做的事：把 worktree 的会话显示在它切出来的项目之下，以及双击会话行即可重命名。
 两件都由本仓库打补丁进 DSH：
@@ -99,7 +114,7 @@ bundle 存为 `client.js.orig`；若代码不是它预期的形状就拒绝动�
 已经打过其中一个的安装仍能拿到另一个；且只有当一个补丁需要的全部替换点都找到时才会写入。
 `npm run patch:sidebar -- --check` 会逐个补丁打印一行，全部已打才返回 0。
 
-## 从 `dsh-worktree` 改名而来
+### 从 `dsh-worktree` 改名而来
 
 现在的包名、模块 id、HTTP 路由与设置命名空间统一为 `gord-dsh-worktree`。若你装的是旧名字：
 
@@ -107,17 +122,6 @@ bundle 存为 `client.js.orig`；若代码不是它预期的形状就拒绝动�
 dsh plugin --profile web remove dsh-worktree
 dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 ```
-
-## 安装
-
-```sh
-dsh plugin --profile web add github:nightosong/gord-dsh-worktree
-```
-
-然后重启 `dsh web`（bundle 进入层栈后重新加载即可），打开 **设置 → 工作树**。无需手工编辑任何 profile
-文件：包内声明了 `dsh.bundle.patch`，CLI 会自己把它加入 bundle 堆栈。
-
-需要 dsh `0.1.5-rc.1` 或更新版本。
 
 ## 工具
 

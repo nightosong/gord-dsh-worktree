@@ -1,41 +1,44 @@
 # gord-dsh-worktree
 
 Git worktree management for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — isolate
-parallel work in its own directory and branch, from the agent or from Settings.
+parallel work in its own directory and branch.
 
 [中文说明](README.zh.md)
 
+## Features
+
+1. **Create worktrees** — an isolated checkout and branch in one atomic command, from the agent
+   (`worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`) or from
+   *Settings → Worktrees*.
+2. **Start a session in a worktree** — the New Session row carries a working-location picker: stay in the
+   current worktree, or create a fresh one and open the session inside it.
+3. **Review changes** — the right sidebar's *Changes* tab shows the uncommitted diff of the session's own
+   directory: every changed file with its counts, and the selected file's patch.
+4. **Manage archived sessions** — *Settings → Worktrees* lists every session archived on this machine, with
+   **Unarchive** per row, a delete icon, and **Delete all** for the set.
+5. **Double-click to rename** — rename a session from its sidebar row, without the menu.
+
 ![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
 
-## What it does
+![A session running in a worktree, with the New Session row's working-location picker](docs/images/session-in-worktree.png)
 
-- **Agent tools** — `worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`.
-  An agent can branch off an isolated checkout for a task instead of doing everything in one working tree.
-- **Worktree selector** — a dropdown on the New Session row, beside the workspace and preset
-  controls: it defaults to the current workspace, and offers the project's other worktrees or
-  creating a new one. It is present only while the session is still blank.
-- **Settings page** — *Settings → Worktrees*: the repository's worktrees with branch/HEAD and
-  current/detached/locked/pruned badges, a create form (branch, base, directory), dry-run prune, and
-  one-click **Open as workspace** so a new worktree becomes a sidebar workspace you can start a session in.
+![The Worktrees settings page: repository, create form, the worktree list with its actions, and the archived-sessions card](docs/images/worktree-settings.png)
 
-  ![The Worktrees settings page: repository, create form, and the worktree list with its actions](docs/images/worktree-settings.png)
-- **Changes tab** — the right sidebar's *Changes* tab: the uncommitted diff of the session's own
-  directory, file by file, with per-file counts and the patch. It follows a session into a worktree
-  without being told it did, because it asks about that session's directory rather than a fixed one.
-- **Double-click a session to rename it** — the sidebar row opens the same rename dialog its menu
-  does, without the hover and the two clicks. Needs the sidebar patch below.
-- **The archive, with a way out** — the same settings page lists every session DSH has archived, with
-  its title, project, dates and log size, and gives each one **Unarchive** plus a **Delete all** for
-  the set. Archiving is one-way in DSH: nothing lists what was archived and nothing undoes it.
-- **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
-  checks that remote branch out from its real commit and sets it as upstream. If you name a base
-  anyway, the shadowed remote is reported rather than silently ignored.
-- **No manual git** — creation is one atomic `git worktree add -b`, and the new directory defaults to
-  `$DSH_HOME/worktree/`, outside every repository: nothing to add to `.gitignore` and forget, nothing
-  for a build or a search to walk. The repository is unaffected either way — a worktree is linked from
-  `.git/worktrees`, so its location never mattered to git.
+## Install
 
-## Picking up someone else's branch
+```sh
+dsh plugin --profile web add github:nightosong/gord-dsh-worktree
+```
+
+Then restart `dsh web` (a reload is enough once the bundle is on the layer stack) and open
+**Settings → Worktrees**. Nothing else needs editing: the package declares `dsh.bundle.patch`, so the
+CLI adds it to the profile's bundle stack itself.
+
+Requires dsh `0.1.5-rc.1` or newer.
+
+## In detail
+
+### Picking up someone else's branch
 
 `worktree_create` with `branch: colleague/feature` and **no** `base` starts from
 `origin/colleague/feature` and tracks it. This is the case that used to be quietly wrong: the branch
@@ -45,7 +48,7 @@ the caller believed they held the colleague's commits.
 An explicit `base` is still honoured — a deliberate *new branch from main* has to stay possible — but
 the result then carries `shadowedRemote` so the ambiguity is visible.
 
-## Working location for a New Session
+### Working location for a New Session
 
 The menu offers exactly two entries: **Current worktree**, where a session starts unless you ask
 otherwise, and **New worktree**. Existing worktrees are deliberately not listed — they are second
@@ -76,7 +79,7 @@ in appears in the sidebar beside the project, titled by its directory code, exac
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
-### The sidebar patch: nesting, and double-click to rename
+#### The sidebar patch: nesting, and double-click to rename
 
 Two things the sidebar should do and does not: show a worktree's sessions under the project they were
 cut from, and rename a session by double-clicking its row. Both are patched into DSH by this
@@ -115,7 +118,7 @@ patch carries its own marker, so an install that already has one still receives 
 is only written once every replacement it needs has been found. `npm run patch:sidebar -- --check` prints
 one line per patch and exits non-zero unless all of them are applied.
 
-### Keeping the sidebar clean
+#### Keeping the sidebar clean
 
 The worktree's workspace is titled after its project — `repo · 1dda6ec0`, not a bare `1dda6ec0` — because
 the title is the only place that relationship can be shown. The sidebar groups by workspace, one group per
@@ -147,7 +150,7 @@ not own. The row is found from this plugin's own host outward via the `conversat
 `data-slot` anchor, not by a document-wide query. If no row can be found the control renders in place
 rather than disappearing.
 
-## Reviewing changes in the sidebar
+### Reviewing changes in the sidebar
 
 The right sidebar's *Changes* tab shows the uncommitted diff of the session's own directory: every
 file that differs from `HEAD`, its status and line counts, and the selected file's patch with both
@@ -167,7 +170,7 @@ preview use, and both of its slots — the body and the tab title — are inject
 a profile composed without the right sidebar loses the tab instead of failing to apply the plugin.
 Open it from the right sidebar's start page, where it is listed beside *Workspace files*.
 
-## The archive
+### The archive
 
 DSH archives a session by adding its id to one array on the workspace registry, and it offers no way
 back: the remote contract has one archive method and nothing else, no CLI command touches it, and no
@@ -214,7 +217,7 @@ moment it loads, and uses them to keep the list newest-archived-first. They are 
 shown** on a row: they are the plugin's own bookkeeping rather than a fact about the session, and a row
 is easier to read with one date than three.
 
-## Renamed from `dsh-worktree`
+### Renamed from `dsh-worktree`
 
 The package id, module id, HTTP routes, and settings namespace are all
 `gord-dsh-worktree` now. If you installed under the old name:
@@ -223,18 +226,6 @@ The package id, module id, HTTP routes, and settings namespace are all
 dsh plugin --profile web remove dsh-worktree
 dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 ```
-
-## Install
-
-```sh
-dsh plugin --profile web add github:nightosong/gord-dsh-worktree
-```
-
-Then restart `dsh web` (a reload is enough once the bundle is on the layer stack) and open
-**Settings → Worktrees**. Nothing else needs editing: the package declares `dsh.bundle.patch`, so the
-CLI adds it to the profile's bundle stack itself.
-
-Requires dsh `0.1.5-rc.1` or newer.
 
 ## Tools
 
