@@ -24,6 +24,9 @@ parallel work in its own directory and branch, from the agent or from Settings.
   without being told it did, because it asks about that session's directory rather than a fixed one.
 - **Double-click a session to rename it** — the sidebar row opens the same rename dialog its menu
   does, without the hover and the two clicks. Needs the sidebar patch below.
+- **The archive, with a way out** — the same settings page lists every session DSH has archived, with
+  its title, project, dates and log size, and gives each one **Unarchive** plus a **Delete all** for
+  the set. Archiving is one-way in DSH: nothing lists what was archived and nothing undoes it.
 - **Remote branches are picked up, not shadowed** — naming a branch that exists only on a remote
   checks that remote branch out from its real commit and sets it as upstream. If you name a base
   anyway, the shadowed remote is reported rather than silently ignored.
@@ -164,6 +167,37 @@ preview use, and both of its slots — the body and the tab title — are inject
 a profile composed without the right sidebar loses the tab instead of failing to apply the plugin.
 Open it from the right sidebar's start page, where it is listed beside *Workspace files*.
 
+## The archive
+
+DSH archives a session by adding its id to one array on the workspace registry, and it offers no way
+back: the remote contract has one archive method and nothing else, no CLI command touches it, and no
+screen lists what was archived — the whole client carries exactly one archive string, the menu item
+that does the archiving. A session that is archived leaves every grouping surface with no record to
+review and no control to undo it.
+
+**Settings → Worktrees** now ends with an *Archived sessions* card listing every session archived on
+this machine, newest archive first: its title, the project it ran in, when it was created, when it was
+archived, and how much its log takes on disk. Each row carries **Unarchive**, and the card's top right
+carries **Delete all**.
+
+Unarchiving writes through the registry's own serialized operation queue and its `setState` — the pair
+`archiveSession` itself uses — so the change is durable *and* lands on screen at once: the sidebar gets
+the session back in its original position, with no restart. Archiving only ever hid it; nothing was
+moved or deleted.
+
+**Delete all** is the one irreversible control in the plugin. It removes each listed session's log
+directory, its cached projections, its archive entry and its workspace membership, behind a
+confirmation that names the count. It sends back the exact ids it listed rather than a "delete
+everything" flag, so a session archived between the listing and the click is never swept up. A session
+that is still live is skipped and reported, instead of having its log pulled out from under a running
+agent.
+
+Archive *times* are not DSH's to give: the archive set is a bare id array with no timestamps anywhere.
+The plugin records them itself, in `$DSH_HOME/gord-dsh-worktree/archived-at.json`, from the moment it
+loads. Sessions archived before it was installed are kept as *archive time not recorded* rather than
+dated now — dating them now would report the install time as the archive time — and the card falls back
+to the session's own creation date for them.
+
 ## Renamed from `dsh-worktree`
 
 The package id, module id, HTTP routes, and settings namespace are all
@@ -209,6 +243,9 @@ point at another one.
   positional argument, never through a shell, so a name can never become a flag.
 - The HTTP surface the panel uses runs git on this machine, so the mutating route accepts same-origin
   and loopback callers only. It is not a remote API.
+- Deleting archived sessions is the only destructive operation that is not about git, and the only one
+  that cannot be undone. It is behind an explicit confirmation, it removes only the ids it was handed,
+  and it refuses to touch a session that is still running.
 
 ## Settings
 

@@ -1,7 +1,7 @@
 {
   "name": "gord-dsh-worktree",
   "version": "0.1.0",
-  "description": "Git worktree management for DeepSeek Harness — isolate parallel work in its own directory and branch from the agent or from Settings, and review the uncommitted changes in the right sidebar.",
+  "description": "Git worktree management for DeepSeek Harness — isolate parallel work in its own directory and branch from the agent or from Settings, review the uncommitted changes in the right sidebar, and see or undo what DSH has archived.",
   "keywords": [
     "dsh",
     "deepseek-harness",

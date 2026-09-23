@@ -455,6 +455,10 @@ const listing = {
 }
 /** Payload the fake host answers the `diff` action with; probes swap it. */
 let diffPayload = { ok: true, root: '/tmp/demo/app', branch: 'main', changed: 0, truncated: false, files: [] }
+/** Payload the fake host answers the `archived` action with; probes swap it. */
+let archivePayload = { ok: true, total: 0, truncated: false, records: [] }
+/** Result the fake host answers the two archive mutations with; probes swap it. */
+let archiveMutation = { ok: true, unarchived: 1, deleted: [], skipped: [] }
 const calls = []
 globalThis.fetch = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
@@ -465,25 +469,29 @@ globalThis.fetch = (url, options) => {
   const payload =
     action === 'diff'
       ? diffPayload
-      : action === 'list'
-      ? listing
-      : action === 'create'
-        ? {
-            ok: true,
-            path: '/tmp/demo/app-worktrees/new',
-            branch: body.branch || 'worktree/new',
-            base: 'origin/colleague/feature',
-            pickedUpRemote: body.branch === 'colleague/feature' ? 'origin/colleague/feature' : undefined,
-            // NOTE: kept literal (not JSON-round-tripped) on purpose in the other probes.
-            // The route adopts the worktree so the session has a workspace to
-            // belong to; the client then starts the session against this id.
-            workspace: { workspaceId: 'ws-new', title: 'new', path: '/tmp/demo/app-worktrees/new' },
-          }
-        : action === 'remove'
-          ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
-          : action === 'adopt'
-            ? { ok: true, workspace: { workspaceId: 'w1', path: body.path, title: 'feat' } }
-            : { ok: true, output: '' }
+      : action === 'archived'
+        ? archivePayload
+        : action === 'unarchive' || action === 'deleteArchived'
+          ? archiveMutation
+          : action === 'list'
+            ? listing
+            : action === 'create'
+              ? {
+                  ok: true,
+                  path: '/tmp/demo/app-worktrees/new',
+                  branch: body.branch || 'worktree/new',
+                  base: 'origin/colleague/feature',
+                  pickedUpRemote: body.branch === 'colleague/feature' ? 'origin/colleague/feature' : undefined,
+                  // NOTE: kept literal (not JSON-round-tripped) on purpose in the other probes.
+                  // The route adopts the worktree so the session has a workspace to
+                  // belong to; the client then starts the session against this id.
+                  workspace: { workspaceId: 'ws-new', title: 'new', path: '/tmp/demo/app-worktrees/new' },
+                }
+              : action === 'remove'
+                ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
+                : action === 'adopt'
+                  ? { ok: true, workspace: { workspaceId: 'w1', path: body.path, title: 'feat' } }
+                  : { ok: true, output: '' }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
 }
 
@@ -883,6 +891,133 @@ const beforeNoSession = calls.filter((call) => call.action === 'diff').length
 const noSessionTree = await settleDiff({ t: props.t, sessionId: 'missing', useSessions: (selector) => selector(sessionList) })
 check('a session without a directory fetches nothing', calls.filter((call) => call.action === 'diff').length === beforeNoSession)
 check('a session without a directory still renders', textsOf(noSessionTree).join(' ').includes('读取改动…'), textsOf(noSessionTree).join(' ').slice(0, 160))
+
+process.stdout.write('\nsettings: archived sessions\n')
+
+/** The same `YYYY-MM-DD HH:mm` the panel renders, in this machine's zone. */
+function stamp(ms) {
+  const date = new Date(ms)
+  const pad = (value) => (value < 10 ? '0' : '') + value
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** Every element under `node` carrying `needle` in its class name. */
+function findAllByClass(node, needle, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (Array.isArray(node)) {
+    for (const child of node) findAllByClass(child, needle, out)
+    return out
+  }
+  if (typeof node.props?.className === 'string' && node.props.className.includes(needle)) out.push(node)
+  for (const child of node.children) findAllByClass(child, needle, out)
+  return out
+}
+
+const archivedAt = Date.UTC(2025, 8, 23, 6, 20)
+const createdAt = Date.UTC(2025, 8, 21, 4, 0)
+archivePayload = {
+  ok: true,
+  total: 3,
+  truncated: false,
+  recordPath: '/home/u/.dsh/gord-dsh-worktree/archived-at.json',
+  records: [
+    { id: 'session-aaa', title: '重构计费链路', cwd: '/Users/me/code/skyrouter', createdAt, archivedAt, sizeBytes: 284315 },
+    // Archived before this plugin existed, so nothing recorded when.
+    { id: 'session-bbb', title: '排查线上 5xx', cwd: '/Users/me/code/atlas', createdAt, archivedAt: null, sizeBytes: 1024 },
+    // Never titled: the projection could not answer, and the id is the label.
+    { id: 'session-ccc', cwd: '/Users/me/code/maas', createdAt: Date.UTC(2025, 6, 1, 1, 0), archivedAt: Date.UTC(2025, 8, 20, 1, 0), sizeBytes: 2048 },
+  ],
+}
+
+// A fresh root: the archive section must start from its own first fetch rather
+// than from whatever the earlier interactions left in the shared hook store.
+slots = []
+cleanups = {}
+const archiveTree = await settle(props)
+const archiveSection = findByClass(archiveTree, 'gord-dsh-worktree-archive')
+check('settings page renders the archive section', archiveSection !== undefined)
+const archiveText = textsOf(archiveSection).join(' | ')
+check('the archive asks the host for its records', calls.some((call) => call.action === 'archived'))
+check('archive lists every record', archiveText.includes('重构计费链路') && archiveText.includes('排查线上 5xx'), archiveText.slice(0, 300))
+check('archive labels an untitled session by its id', archiveText.includes('session-ccc'), archiveText.slice(0, 300))
+check('archive shows the recorded archive time', archiveText.includes(`归档于 ${stamp(archivedAt)}`), archiveText.slice(0, 300))
+check('archive says so when the time was never recorded', archiveText.includes('归档时间未记录'), archiveText.slice(0, 300))
+check('archive shows the session date as context', archiveText.includes(`创建于 ${stamp(createdAt)}`), archiveText.slice(0, 300))
+check('archive counts the whole set, not the page', archiveText.includes('共 3 条'), archiveText.slice(0, 300))
+check('archive shows each log size', archiveText.includes('278 KB'), archiveText.slice(0, 300))
+
+process.stdout.write('\ninteraction: unarchive one session\n')
+const rowsFound = findAllByClass(archiveSection, 'gord-dsh-worktree-archive-row')
+check('archive renders one row per record', rowsFound.length === 3, String(rowsFound.length))
+const firstRow = rowsFound.find((row) => row.props['data-gord-archive-row'] === 'session-aaa')
+const unarchiveButton = findButton(firstRow, '取消归档')
+check('each row offers unarchive', unarchiveButton !== undefined)
+unarchiveButton?.props.onClick()
+const unarchived = await settle(props)
+const unarchiveCall = calls.filter((call) => call.action === 'unarchive').pop()
+check('unarchive posts to the host', unarchiveCall !== undefined, JSON.stringify(calls.map((c) => c.action)))
+check('unarchive names only that session', JSON.stringify(unarchiveCall?.body?.ids) === JSON.stringify(['session-aaa']), JSON.stringify(unarchiveCall?.body))
+check('unarchive is reported back', textsOf(unarchived).join(' ').includes('已取消归档'), textsOf(unarchived).join(' ').slice(-260))
+
+process.stdout.write('\ninteraction: delete every archived session\n')
+const deleteAll = findButton(archiveSection, '全部删除')
+check('the section offers delete-all', deleteAll !== undefined)
+// `全部删除` contains `删除`, so an unscoped lookup would find the worktree
+// row's own remove button first — this pins that the archive's control is a
+// different node, not that the label merely matches.
+check('delete-all is a distinct control from the worktree row delete', deleteAll !== findButton(archiveTree, '删除'), 'the archive button is the row remove button')
+deleteAll?.props.onClick()
+const askedConfirm = await settle(props)
+check('delete-all asks first', textsOf(askedConfirm).join(' ').includes('确认永久删除这 3 个会话'), textsOf(askedConfirm).join(' ').slice(-320))
+check('the confirm states what is removed', textsOf(askedConfirm).join(' ').includes('无法恢复'))
+check('nothing is deleted before the confirm', !calls.some((call) => call.action === 'deleteArchived'))
+
+archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-ccc'], skipped: [] }
+const confirmButton = findButton(askedConfirm, '永久删除')
+check('the confirm offers a submit', confirmButton !== undefined)
+confirmButton?.props.onClick()
+const deleted = await settle(props)
+const deleteCall = calls.filter((call) => call.action === 'deleteArchived').pop()
+check('delete posts the ids it listed, not a flag', JSON.stringify(deleteCall?.body?.ids) === JSON.stringify(['session-aaa', 'session-bbb', 'session-ccc']), JSON.stringify(deleteCall?.body))
+check('delete is reported back', textsOf(deleted).join(' ').includes('已删除 3 个会话'), textsOf(deleted).join(' ').slice(-260))
+
+process.stdout.write('\nsettings: archive edge cases\n')
+// A session still running cannot have its log pulled out from under it, so the
+// host skips it and the panel has to say so rather than claim a clean sweep.
+archiveMutation = { ok: true, deleted: ['session-aaa'], skipped: [{ id: 'session-bbb', reason: 'live' }] }
+slots = []
+cleanups = {}
+const skippedTree = await settle(props)
+findButton(skippedTree, '全部删除')?.props.onClick()
+const skippedConfirm = await settle(props)
+findButton(skippedConfirm, '永久删除')?.props.onClick()
+const skipped = await settle(props)
+check('a skipped session is reported', textsOf(skipped).join(' ').includes('仍在使用中，已跳过'), textsOf(skipped).join(' ').slice(-260))
+
+archivePayload = { ok: false, error: 'no-registry', message: 'no workspace registry' }
+slots = []
+cleanups = {}
+const noRegistryTree = await settle(props)
+check('a composition without a registry is explained', textsOf(noRegistryTree).join(' ').includes('当前配置没有工作区能力'), textsOf(noRegistryTree).join(' ').slice(-260))
+
+archivePayload = { ok: true, total: 0, truncated: false, records: [] }
+slots = []
+cleanups = {}
+const emptyTree = await settle(props)
+const emptySection = findByClass(emptyTree, 'gord-dsh-worktree-archive')
+check('an empty archive says so', textsOf(emptySection).join(' ').includes('没有已归档的会话'), textsOf(emptySection).join(' ').slice(-200))
+check('an empty archive offers no delete-all', findButton(emptySection, '全部删除') === undefined)
+
+archivePayload = {
+  ok: true,
+  total: 900,
+  truncated: true,
+  records: [{ id: 'session-zzz', title: '很久以前', cwd: '/tmp/x', createdAt, archivedAt, sizeBytes: 10 }],
+}
+slots = []
+cleanups = {}
+const truncatedTree = await settle(props)
+check('a truncated archive says so', textsOf(truncatedTree).join(' ').includes('只列出最近的 1 条'), textsOf(truncatedTree).join(' ').slice(-260))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

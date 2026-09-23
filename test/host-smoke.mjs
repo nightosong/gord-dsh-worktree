@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import * as archive from '../lib/archive.js'
 import * as service from '../lib/service.js'
 import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode } from '../lib/worktree.js'
 
@@ -458,6 +459,134 @@ try {
   const counted = service.patchCounts('--- a\n+++ b\n@@ -1 +1,2 @@\n-gone\n+kept\n+added\n')
   check('counts ignore the file headers', counted.additions === 2 && counted.deletions === 1, JSON.stringify(counted))
   check('an empty patch counts nothing', JSON.stringify(service.patchCounts('')) === '{"additions":0,"deletions":0}')
+
+  process.stdout.write('\narchive record\n')
+  check('an unreadable record is not a record', archive.parseArchiveRecord('{oops') === undefined)
+  check('a record from another version is ignored', archive.parseArchiveRecord('{"version":99,"archivedAt":{}}') === undefined)
+  check('a record without a map is ignored', archive.parseArchiveRecord('{"version":1}') === undefined)
+  check('an empty file is not a record', archive.parseArchiveRecord('   ') === undefined)
+  const parsedRecord = archive.parseArchiveRecord('{"version":1,"archivedAt":{"session-a":123,"session-b":null,"session-c":"nope"}}')
+  check('a record parses its times', parsedRecord.archivedAt['session-a'] === 123, JSON.stringify(parsedRecord))
+  check('a null time survives parsing as null', parsedRecord.archivedAt['session-b'] === null)
+  check('a non-numeric time becomes unknown', parsedRecord.archivedAt['session-c'] === null, JSON.stringify(parsedRecord))
+
+  // The first sync ever is the one that must not lie: those sessions were
+  // archived before anything was recording, so dating them `now` would report
+  // the install time as the archive time.
+  const seeded = archive.reconcileArchiveRecord(undefined, ['session-a', 'session-b'], 5000, true)
+  check('the first sync records ids as unknown, not as now', seeded.archivedAt['session-a'] === null && seeded.archivedAt['session-b'] === null, JSON.stringify(seeded))
+  const stamped = archive.reconcileArchiveRecord(seeded, ['session-a', 'session-c'], 6000, false)
+  check('an id archived after the first sync is stamped', stamped.archivedAt['session-c'] === 6000, JSON.stringify(stamped))
+  check('a seeded id keeps its unknown time', stamped.archivedAt['session-a'] === null, JSON.stringify(stamped))
+  check('an id no longer archived is dropped', !('session-b' in stamped.archivedAt), JSON.stringify(stamped))
+  const restored = archive.reconcileArchiveRecord(stamped, ['session-c', 'session-b'], 7000, false)
+  check('re-archiving records a fresh time, not the old one', restored.archivedAt['session-b'] === 7000, JSON.stringify(restored))
+  check('an unchanged record compares equal', archive.sameArchiveRecord(stamped, archive.reconcileArchiveRecord(stamped, ['session-a', 'session-c'], 9000, false)))
+  check('a changed record compares unequal', !archive.sameArchiveRecord(stamped, restored))
+
+  const rows = archive.archiveRows(
+    ['session-a', 'session-b', 'session-c'],
+    (id) => ({
+      'session-a': { title: 'newer', cwd: '/tmp/app', createdAt: 10, sizeBytes: 1 },
+      'session-b': { title: '', cwd: '/tmp/app', createdAt: 20, sizeBytes: 2 },
+      'session-c': { title: 'older', cwd: '/tmp/app', createdAt: 30, sizeBytes: 3 },
+    })[id],
+    { archivedAt: { 'session-a': 200, 'session-b': null, 'session-c': 100 } },
+  )
+  check('rows sort newest archive first', rows.map((row) => row.id).join() === 'session-a,session-c,session-b', JSON.stringify(rows.map((r) => r.id)))
+  check('an empty title is no title', rows[2].title === undefined, JSON.stringify(rows[2]))
+  check('an unrecorded archive time is null, not zero', rows[2].archivedAt === null, JSON.stringify(rows[2]))
+  check('rows carry the session date', rows[0].createdAt === 10, JSON.stringify(rows[0]))
+  check('rows carry the log size', rows[0].sizeBytes === 1, JSON.stringify(rows[0]))
+
+  check('archived ids come from the registry', archive.archivedIds({ archivedSessionIds: ['session-a'] }).join() === 'session-a')
+  check('no registry means no ids', archive.archivedIds(undefined) === undefined)
+
+  process.stdout.write('\narchive operations\n')
+  // A stand-in for the workspace registry: only the surface archive.js writes
+  // through, so these pin the calls it makes rather than reimplementing them.
+  const fakeRegistry = (archived, workspaces = []) => {
+    let state = { initialized: true, workspaceIds: workspaces.map((w) => w.id), archivedSessionIds: [...archived] }
+    const detached = []
+    return {
+      get archivedSessionIds() { return state.archivedSessionIds },
+      get state() { return state },
+      get detached() { return detached },
+      requireState() { return state },
+      async setState(next) { state = next },
+      async enqueueOperation(operation) { return operation() },
+      list() {
+        return workspaces.map((workspace) => ({
+          id: workspace.id,
+          sessionIds: workspace.sessionIds.filter((id) => !detached.includes(id)),
+          async detachSession(id) { detached.push(id) },
+        }))
+      },
+    }
+  }
+
+  const recordPath = archive.archiveRecordPath()
+  check('the record lives under the harness home', recordPath.startsWith(scratch), recordPath)
+  const firstSync = await archive.syncArchiveRecord({ now: () => 5000 }, ['session-old'])
+  check('the first sync seeds the file', firstSync.seeded === true)
+  check('the seeded file reads back', (await archive.readArchiveRecordFile(recordPath)).archivedAt['session-old'] === null)
+  const laterSync = await archive.syncArchiveRecord({ now: () => 6000 }, ['session-old', 'session-new'])
+  check('a later sync stamps only what is new', laterSync.record.archivedAt['session-new'] === 6000 && laterSync.record.archivedAt['session-old'] === null, JSON.stringify(laterSync.record))
+
+  // A real log directory in the harness home, so the delete path runs against
+  // the filesystem rather than a mock of it.
+  const sessionDir = join(dshHomePath('sessions'), '--tmp-project--', 'session-gone')
+  mkdirSync(sessionDir, { recursive: true })
+  writeFileSync(join(sessionDir, 'session.v3.jsonl.zstd'), 'log')
+  check('a session directory is found by id', (await archive.sessionDirectory('session-gone')) === sessionDir)
+  check('a missing session has no directory', (await archive.sessionDirectory('session-nope')) === undefined)
+
+  const unarchiveRegistry = fakeRegistry(['session-gone', 'session-kept'])
+  const unarchived = await archive.unarchiveSessions({ registry: unarchiveRegistry }, ['session-gone'])
+  check('unarchive reports what it removed', unarchived.unarchived === 1, JSON.stringify(unarchived))
+  check('unarchive removes only the named id', unarchiveRegistry.archivedSessionIds.join() === 'session-kept', JSON.stringify(unarchiveRegistry.state))
+  const noop = await archive.unarchiveSessions({ registry: unarchiveRegistry }, ['session-absent'])
+  check('unarchiving an id that is not archived changes nothing', noop.unarchived === 0 && unarchiveRegistry.archivedSessionIds.join() === 'session-kept')
+  const noRegistry = await archive.unarchiveSessions({ registry: undefined }, ['session-gone'])
+  check('unarchive without a registry refuses rather than guessing', noRegistry.ok === false && noRegistry.error === 'no-registry', JSON.stringify(noRegistry))
+  const wrongShape = await archive.unarchiveSessions({ registry: { archivedSessionIds: [] } }, ['session-gone'])
+  check('a registry without the write surface refuses', wrongShape.ok === false, JSON.stringify(wrongShape))
+
+  // The delete path: a live session must be left alone, and everything else
+  // must actually go.
+  const cacheDeletes = []
+  const deleteRegistry = fakeRegistry(['session-gone', 'session-live'], [{ id: 'w1', sessionIds: ['session-gone'] }])
+  const deletion = await archive.deleteSessions({
+    registry: deleteRegistry,
+    now: () => 1,
+    sessions: { get: (id) => (id === 'session-live' ? { id } : undefined) },
+    cache: { requireTable: () => ({ delete: (id) => cacheDeletes.push(id) }) },
+  }, ['session-gone', 'session-live'])
+  check('a live session is skipped, not deleted', JSON.stringify(deletion.skipped) === JSON.stringify([{ id: 'session-live', reason: 'live' }]), JSON.stringify(deletion))
+  check('a skipped session stays archived', deleteRegistry.archivedSessionIds.includes('session-live'), JSON.stringify(deleteRegistry.state))
+  check('a deleted session leaves the archive', !deleteRegistry.archivedSessionIds.includes('session-gone'), JSON.stringify(deleteRegistry.state))
+  check('the log directory is removed', !existsSync(sessionDir))
+  check('the cache row is dropped', cacheDeletes.includes('session-gone'), JSON.stringify(cacheDeletes))
+  check('the workspace membership is dropped', deleteRegistry.detached.includes('session-gone'), JSON.stringify(deleteRegistry.detached))
+  check('the deletion is reported', deletion.deleted.join() === 'session-gone', JSON.stringify(deletion))
+
+  const archivedList = await archive.listArchived({
+    registry: fakeRegistry(['session-gone']),
+    now: () => 1,
+    persistence: { list: async () => [{ header: { id: 'session-gone', cwd: '/tmp/project', createdAt: 42 } }] },
+    cache: { cachedSnapshot: () => ({ values: { title: 'a title from the cache' } }) },
+  })
+  check('the listing reports the archived session', archivedList.ok === true && archivedList.records.length === 1, JSON.stringify(archivedList))
+  check('the listing carries the cached title', archivedList.records[0].title === 'a title from the cache', JSON.stringify(archivedList.records[0]))
+  check('the listing carries the header date and cwd', archivedList.records[0].createdAt === 42 && archivedList.records[0].cwd === '/tmp/project', JSON.stringify(archivedList.records[0]))
+  const untitled = await archive.listArchived({
+    registry: fakeRegistry(['session-gone']),
+    now: () => 1,
+    persistence: { list: async () => [{ header: { id: 'session-gone', cwd: '/tmp/project', createdAt: 42 } }] },
+  })
+  check('a session with no projection source still lists, without a title', untitled.records[0].title === undefined, JSON.stringify(untitled.records[0]))
+  const noRegistryList = await archive.listArchived({ registry: undefined, now: () => 1 })
+  check('listing without a registry is explained', noRegistryList.ok === false && noRegistryList.error === 'no-registry', JSON.stringify(noRegistryList))
 
 } finally {
   rmSync(scratch, { recursive: true, force: true })
