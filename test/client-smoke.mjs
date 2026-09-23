@@ -200,8 +200,7 @@ function findByClass(node, needle) {
 }
 
 /** Find the first `<input>` whose placeholder matches. */
-function findInput(node, placeholder) {
-  if (node === null || node === undefined || typeof node !== 'object') return undefined
+function findInput(node, placeholder) {  if (node === null || node === undefined || typeof node !== 'object') return undefined
   if (Array.isArray(node)) {
     for (const child of node) {
       const hit = findInput(child, placeholder)
@@ -913,6 +912,24 @@ function findAllByClass(node, needle, out = []) {
   return out
 }
 
+/** The innermost element whose children include `target`, for ordering checks. */
+function findParent(node, target) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findParent(child, target)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (node.children.includes(target)) return node
+  for (const child of node.children) {
+    const hit = findParent(child, target)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
 const archivedAt = Date.UTC(2025, 8, 23, 6, 20)
 const createdAt = Date.UTC(2025, 8, 21, 4, 0)
 archivePayload = {
@@ -959,6 +976,48 @@ check('unarchive posts to the host', unarchiveCall !== undefined, JSON.stringify
 check('unarchive names only that session', JSON.stringify(unarchiveCall?.body?.ids) === JSON.stringify(['session-aaa']), JSON.stringify(unarchiveCall?.body))
 check('unarchive is reported back', textsOf(unarchived).join(' ').includes('已取消归档'), textsOf(unarchived).join(' ').slice(-260))
 
+process.stdout.write('\ninteraction: delete one session\n')
+// A fresh root, because the unarchive above left the section mid-flight and
+// this probe is about one row's own confirm.
+archiveMutation = { ok: true, deleted: ['session-bbb'], skipped: [] }
+slots = []
+cleanups = {}
+const singleTree = await settle(props)
+const singleSection = findByClass(singleTree, 'gord-dsh-worktree-archive')
+const targetRow = findAllByClass(singleSection, 'gord-dsh-worktree-archive-row')
+  .find((row) => row.props['data-gord-archive-row'] === 'session-bbb')
+const trashIcon = findAllByClass(targetRow, 'gord-dsh-worktree-iconbtn')[0]
+check('a row offers a delete icon', trashIcon !== undefined)
+// An icon button has no text, so its accessible name is the only thing that
+// says what it does — a bare glyph would be unlabelled.
+check(
+  'the delete icon carries an accessible name',
+  typeof trashIcon?.props['aria-label'] === 'string' && trashIcon.props['aria-label'].includes('永久删除'),
+  String(trashIcon?.props['aria-label']),
+)
+const rowUnarchive = findButton(targetRow, '取消归档')
+const rowActions = findParent(targetRow, trashIcon)
+check(
+  'the delete icon sits left of unarchive',
+  rowActions !== undefined && rowActions.children.indexOf(trashIcon) < rowActions.children.indexOf(rowUnarchive),
+  rowActions ? String(rowActions.children.indexOf(trashIcon)) : 'no shared container',
+)
+
+const beforeSingle = calls.filter((call) => call.action === 'deleteArchived').length
+trashIcon?.props.onClick()
+const rowAsked = await settle(props)
+check('deleting one row asks first', textsOf(rowAsked).join(' ').includes('确认永久删除这个会话'), textsOf(rowAsked).join(' ').slice(-320))
+check('the row confirm names no count', !textsOf(rowAsked).join(' ').includes('确认永久删除这 '))
+check('nothing is deleted before that confirm', calls.filter((call) => call.action === 'deleteArchived').length === beforeSingle)
+
+const rowConfirmSubmit = findButton(rowAsked, '永久删除')
+check('the row confirm offers a submit', rowConfirmSubmit !== undefined)
+rowConfirmSubmit?.props.onClick()
+const rowDeleted = await settle(props)
+const singleCall = calls.filter((call) => call.action === 'deleteArchived').pop()
+check('deleting one row posts only that id', JSON.stringify(singleCall?.body?.ids) === JSON.stringify(['session-bbb']), JSON.stringify(singleCall?.body))
+check('deleting one row is reported', textsOf(rowDeleted).join(' ').includes('已删除 1 个会话'), textsOf(rowDeleted).join(' ').slice(-260))
+
 process.stdout.write('\ninteraction: delete every archived session\n')
 const deleteAll = findButton(archiveSection, '全部删除')
 check('the section offers delete-all', deleteAll !== undefined)
@@ -966,11 +1025,13 @@ check('the section offers delete-all', deleteAll !== undefined)
 // row's own remove button first — this pins that the archive's control is a
 // different node, not that the label merely matches.
 check('delete-all is a distinct control from the worktree row delete', deleteAll !== findButton(archiveTree, '删除'), 'the archive button is the row remove button')
+// Counted, not "no call ever": the single-row probe above already deleted one.
+const beforeBulk = calls.filter((call) => call.action === 'deleteArchived').length
 deleteAll?.props.onClick()
 const askedConfirm = await settle(props)
 check('delete-all asks first', textsOf(askedConfirm).join(' ').includes('确认永久删除这 3 个会话'), textsOf(askedConfirm).join(' ').slice(-320))
 check('the confirm states what is removed', textsOf(askedConfirm).join(' ').includes('无法恢复'))
-check('nothing is deleted before the confirm', !calls.some((call) => call.action === 'deleteArchived'))
+check('nothing is deleted before the confirm', calls.filter((call) => call.action === 'deleteArchived').length === beforeBulk)
 
 archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-ccc'], skipped: [] }
 const confirmButton = findButton(askedConfirm, '永久删除')

@@ -177,8 +177,8 @@ review and no control to undo it.
 
 **Settings → Worktrees** now ends with an *Archived sessions* card listing every session archived on
 this machine, newest archive first: its title, the project it ran in, when it was created, when it was
-archived, and how much its log takes on disk. Each row carries **Unarchive**, and the card's top right
-carries **Delete all**.
+archived, and how much its log takes on disk. Each row carries **Unarchive** and a delete icon, and the card's
+top right carries **Delete all**.
 
 Unarchiving writes through the registry's own serialized operation queue and its `setState` — the pair
 `archiveSession` itself uses — so the change is durable *and* lands on screen at once: the sidebar gets
