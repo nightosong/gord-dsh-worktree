@@ -1078,6 +1078,20 @@ check(
   `confirm at ${askedOrder.indexOf('确认永久删除这 3 个会话')}, first row at ${askedOrder.indexOf('重构计费链路')}`,
 )
 
+// The confirm's buttons sit in the block's bottom-right corner, under the text
+// they answer, and the destructive one stays left of Cancel.
+const confirmBlock = findAllByClass(askedConfirm, 'gord-dsh-worktree-confirm')[0]
+check('the confirm renders as one block', confirmBlock !== undefined)
+const confirmActionRow = stylesOf(confirmBlock).find((style) => style.justifyContent !== undefined)
+check('the confirm buttons are aligned to the right edge', confirmActionRow?.justifyContent === 'flex-end', JSON.stringify(confirmActionRow))
+check('the confirm buttons cap the block, below the text', (() => {
+  const labels = textsOf(confirmBlock)
+  const submit = labels.indexOf('永久删除')
+  const cancel = labels.indexOf('取消')
+  const body = labels.findIndex((text) => text.includes('无法恢复'))
+  return body !== -1 && submit > body && cancel > submit
+})(), JSON.stringify(textsOf(confirmBlock)))
+
 archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-ccc'], skipped: [] }
 const confirmButton = findButton(askedConfirm, '永久删除')
 check('the confirm offers a submit', confirmButton !== undefined)
