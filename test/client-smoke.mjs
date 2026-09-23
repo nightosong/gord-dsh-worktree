@@ -961,12 +961,41 @@ check('archive lists every record', archiveText.includes('重构计费链路') &
 check('archive labels an untitled session by its id', archiveText.includes('session-ccc'), archiveText.slice(0, 300))
 // One time per row, and it is the last write — never the archive time, and never
 // both dates at once.
-check('archive dates a row by its last write', archiveText.includes(`更新于 ${stamp(updatedAt)}`), archiveText.slice(0, 300))
-check('archive never shows the archive time', !archiveText.includes('归档于') && !archiveText.includes(stamp(archivedAt)), archiveText.slice(0, 300))
-check('archive does not show the creation date as well', !archiveText.includes(`创建于 ${stamp(createdAt)}`), archiveText.slice(0, 300))
-check('archive falls back to the creation date with no last write', archiveText.includes(`创建于 ${stamp(Date.UTC(2025, 6, 1, 1, 0))}`), archiveText.slice(0, 300))
-check('archive dates a row exactly once', (archiveText.match(/更新于 |创建于 /g) || []).length === 3, archiveText.slice(0, 300))
+check('archive dates a row by its last write', archiveText.includes(stamp(updatedAt)), archiveText.slice(0, 300))
+check('archive never shows the archive time', !archiveText.includes(stamp(archivedAt)), archiveText.slice(0, 300))
+check('archive does not show the creation date as well', !archiveText.includes(stamp(createdAt)), archiveText.slice(0, 300))
+check('archive falls back to the creation date with no last write', archiveText.includes(stamp(Date.UTC(2025, 6, 1, 1, 0))), archiveText.slice(0, 300))
+// A bare date, with no word in front of it: nothing to translate, nothing to
+// explain, and the column reads as path / date / size.
+check('archive puts no label on the date', !/更新于|创建于|归档于|updated |created |archived /.test(archiveText), archiveText.slice(0, 300))
+const dated = (archiveText.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/g) || [])
+check('archive dates every row exactly once', dated.length === 3, JSON.stringify(dated))
+
 check('archive counts the whole set, not the page', archiveText.includes('共 3 条'), archiveText.slice(0, 300))
+check('archive shows each log size', archiveText.includes('278 KB'), archiveText.slice(0, 300))
+
+// The layout: the path is left-aligned and the numbers share one right edge, so
+// the column can be scanned straight down. Geometry is the point here, so this
+// reads the styles rather than asserting on markup.
+/** Every inline style under `node`, in render order. */
+function stylesOf(node, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (Array.isArray(node)) {
+    for (const child of node) stylesOf(child, out)
+    return out
+  }
+  if (node.props?.style) out.push(node.props.style)
+  for (const child of node.children) stylesOf(child, out)
+  return out
+}
+const layoutRow = findAllByClass(archiveSection, 'gord-dsh-worktree-archive-row')[0]
+const layoutStyles = stylesOf(layoutRow)
+check('the path is left-aligned and takes the slack', layoutStyles.some((style) => style.textAlign === 'left' && style.flex === '1 1 auto'), JSON.stringify(layoutStyles.map((x) => x.textAlign)))
+check('the path truncates rather than wrapping', layoutStyles.some((style) => style.textOverflow === 'ellipsis' && style.whiteSpace === 'nowrap'))
+check('the trailing group is pushed to the right edge', layoutStyles.some((style) => style.marginLeft === 'auto'))
+check('the size is right-aligned in a fixed column', layoutStyles.some((style) => style.textAlign === 'right' && style.minWidth !== undefined))
+check('the numbers use tabular figures so the column stays straight', layoutStyles.some((style) => style.fontVariantNumeric === 'tabular-nums'))
+
 check('archive shows each log size', archiveText.includes('278 KB'), archiveText.slice(0, 300))
 
 process.stdout.write('\ninteraction: unarchive one session\n')
