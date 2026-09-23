@@ -200,11 +200,19 @@ workspace and into the browser's *Ungrouped* bucket, as an empty group that surv
 reloaded. Keeping the entry is what makes the session stay hidden, immediately and after every reload;
 the panel drops these ids from its own listing because there is nothing left to show.
 
-Archive *times* are not DSH's to give: the archive set is a bare id array with no timestamps anywhere.
-The plugin records them itself, in `$DSH_HOME/gord-dsh-worktree/archived-at.json`, from the moment it
-loads. Sessions archived before it was installed are kept as *archive time not recorded* rather than
-dated now — dating them now would report the install time as the archive time — and the card falls back
-to the session's own creation date for them.
+Each row carries one date, and it is the session's last write — read off the newest mtime in its log
+directory during the same scan that measures its size. That is the honest answer to "when was this last
+used", which is the question a list of archived sessions is actually asked. A projection could answer
+`lastPromptAt` instead, the field the sidebar itself sorts by, but it only exists for a session the
+projection cache holds a row for, and cold-reading the rest costs a whole log per row — so a session
+that never wrote after it was created falls back to its own creation date, and that is the only case in
+which a row shows one.
+
+Archive *times* are not DSH's to give either: the archive set is a bare id array with no timestamps
+anywhere. The plugin records them itself, in `$DSH_HOME/gord-dsh-worktree/archived-at.json`, from the
+moment it loads, and uses them to keep the list newest-archived-first. They are deliberately **not
+shown** on a row: they are the plugin's own bookkeeping rather than a fact about the session, and a row
+is easier to read with one date than three.
 
 ## Renamed from `dsh-worktree`
 

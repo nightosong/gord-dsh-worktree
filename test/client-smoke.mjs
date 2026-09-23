@@ -932,16 +932,18 @@ function findParent(node, target) {
 
 const archivedAt = Date.UTC(2025, 8, 23, 6, 20)
 const createdAt = Date.UTC(2025, 8, 21, 4, 0)
+const updatedAt = Date.UTC(2025, 8, 22, 9, 35)
 archivePayload = {
   ok: true,
   total: 3,
   truncated: false,
   recordPath: '/home/u/.dsh/gord-dsh-worktree/archived-at.json',
   records: [
-    { id: 'session-aaa', title: '重构计费链路', cwd: '/Users/me/code/skyrouter', createdAt, archivedAt, sizeBytes: 284315 },
-    // Archived before this plugin existed, so nothing recorded when.
-    { id: 'session-bbb', title: '排查线上 5xx', cwd: '/Users/me/code/atlas', createdAt, archivedAt: null, sizeBytes: 1024 },
-    // Never titled: the projection could not answer, and the id is the label.
+    { id: 'session-aaa', title: '重构计费链路', cwd: '/Users/me/code/skyrouter', createdAt, updatedAt, archivedAt, sizeBytes: 284315 },
+    // Archived before this plugin existed, so nothing recorded when. It still
+    // has a log to date, so its row shows the last write, not the archive time.
+    { id: 'session-bbb', title: '排查线上 5xx', cwd: '/Users/me/code/atlas', createdAt, updatedAt, archivedAt: null, sizeBytes: 1024 },
+    // Never titled, and never written after it was created: the fallback date.
     { id: 'session-ccc', cwd: '/Users/me/code/maas', createdAt: Date.UTC(2025, 6, 1, 1, 0), archivedAt: Date.UTC(2025, 8, 20, 1, 0), sizeBytes: 2048 },
   ],
 }
@@ -957,9 +959,13 @@ const archiveText = textsOf(archiveSection).join(' | ')
 check('the archive asks the host for its records', calls.some((call) => call.action === 'archived'))
 check('archive lists every record', archiveText.includes('重构计费链路') && archiveText.includes('排查线上 5xx'), archiveText.slice(0, 300))
 check('archive labels an untitled session by its id', archiveText.includes('session-ccc'), archiveText.slice(0, 300))
-check('archive shows the recorded archive time', archiveText.includes(`归档于 ${stamp(archivedAt)}`), archiveText.slice(0, 300))
-check('archive says so when the time was never recorded', archiveText.includes('归档时间未记录'), archiveText.slice(0, 300))
-check('archive shows the session date as context', archiveText.includes(`创建于 ${stamp(createdAt)}`), archiveText.slice(0, 300))
+// One time per row, and it is the last write — never the archive time, and never
+// both dates at once.
+check('archive dates a row by its last write', archiveText.includes(`更新于 ${stamp(updatedAt)}`), archiveText.slice(0, 300))
+check('archive never shows the archive time', !archiveText.includes('归档于') && !archiveText.includes(stamp(archivedAt)), archiveText.slice(0, 300))
+check('archive does not show the creation date as well', !archiveText.includes(`创建于 ${stamp(createdAt)}`), archiveText.slice(0, 300))
+check('archive falls back to the creation date with no last write', archiveText.includes(`创建于 ${stamp(Date.UTC(2025, 6, 1, 1, 0))}`), archiveText.slice(0, 300))
+check('archive dates a row exactly once', (archiveText.match(/更新于 |创建于 /g) || []).length === 3, archiveText.slice(0, 300))
 check('archive counts the whole set, not the page', archiveText.includes('共 3 条'), archiveText.slice(0, 300))
 check('archive shows each log size', archiveText.includes('278 KB'), archiveText.slice(0, 300))
 

@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { basename } from 'node:path'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -592,6 +592,10 @@ try {
   check('the tombstone is not counted in the total either', archivedList.total === 1, String(archivedList.total))
   check('the listing carries the cached title', archivedList.records[0].title === 'a title from the cache', JSON.stringify(archivedList.records[0]))
   check('the listing carries the header date and cwd', archivedList.records[0].createdAt === 42 && archivedList.records[0].cwd === '/tmp/project', JSON.stringify(archivedList.records[0]))
+  // The last write is read off the log directory, not off a projection: the
+  // directory's newest mtime, which is the same scan that answers the size.
+  check('the listing dates the row by its newest log write', typeof archivedList.records[0].updatedAt === 'number' && archivedList.records[0].updatedAt > 0, JSON.stringify(archivedList.records[0]))
+  check('the last write is the newest entry, not the directory itself', archivedList.records[0].updatedAt === statSync(join(keptDir, 'session.v3.jsonl.zstd')).mtimeMs, String(archivedList.records[0].updatedAt))
   const untitled = await archive.listArchived({
     registry: fakeRegistry(['session-kept']),
     now: () => 1,
