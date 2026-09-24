@@ -1112,7 +1112,9 @@ findButton(skippedTree, '全部删除')?.props.onClick()
 const skippedConfirm = await settle(props)
 findButton(skippedConfirm, '永久删除')?.props.onClick()
 const skipped = await settle(props)
-check('a skipped session is reported', textsOf(skipped).join(' ').includes('仍在使用中，已跳过'), textsOf(skipped).join(' ').slice(-260))
+// The message has to say *why*, because "still in use" is what made the
+// reporter think nothing was using it — nothing was, and the check was wrong.
+check('a skipped session is reported, and says it is running', textsOf(skipped).join(' ').includes('正在运行，已跳过'), textsOf(skipped).join(' ').slice(-260))
 
 archivePayload = { ok: false, error: 'no-registry', message: 'no workspace registry' }
 slots = []

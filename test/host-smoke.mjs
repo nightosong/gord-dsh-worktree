@@ -559,10 +559,34 @@ try {
   const deletion = await archive.deleteSessions({
     registry: deleteRegistry,
     now: () => 1,
-    sessions: { get: (id) => (id === 'session-live' ? { id } : undefined) },
+    // `session-live` differs from `session-gone` only in that its agent is
+    // actually running. Both are `idle`-capable Sessions the process knows
+    // about, which is why the status — not the mere presence of a registry
+    // entry — is what decides.
+    agents: { get: (id) => (id === 'session-live' ? { id, status: 'running' } : { id, status: 'idle' }) },
     cache: { requireTable: () => ({ delete: (id) => cacheDeletes.push(id) }) },
   }, ['session-gone', 'session-live'])
-  check('a live session is skipped, not deleted', JSON.stringify(deletion.skipped) === JSON.stringify([{ id: 'session-live', reason: 'live' }]), JSON.stringify(deletion))
+  check('a running session is skipped, not deleted', JSON.stringify(deletion.skipped) === JSON.stringify([{ id: 'session-live', reason: 'live' }]), JSON.stringify(deletion))
+  // The bug this replaced: an idle agent's session was refused because
+  // `sessions.get` had an entry for it — which hydration alone creates.
+  const idleDeletion = await archive.deleteSessions({
+    registry: fakeRegistry(['session-idle'], [{ id: 'w1', sessionIds: ['session-idle'] }]),
+    now: () => 1,
+    agents: { get: () => ({ id: 'session-idle', status: 'idle' }) },
+  }, ['session-idle'])
+  check('an idle agent does not block a delete', idleDeletion.deleted.join() === 'session-idle' && idleDeletion.skipped.length === 0, JSON.stringify(idleDeletion))
+  const noAgents = await archive.deleteSessions({
+    registry: fakeRegistry(['session-x'], []),
+    now: () => 1,
+    agents: undefined,
+  }, ['session-x'])
+  check('a composition with no agents service still deletes', noAgents.deleted.join() === 'session-x', JSON.stringify(noAgents))
+  const halfDisposed = await archive.deleteSessions({
+    registry: fakeRegistry(['session-y'], []),
+    now: () => 1,
+    agents: { get: () => { throw new Error('disposed') } },
+  }, ['session-y'])
+  check('a throwing agents registry fails open, not closed', halfDisposed.deleted.join() === 'session-y', JSON.stringify(halfDisposed))
   check('a skipped session stays archived', deleteRegistry.archivedSessionIds.includes('session-live'), JSON.stringify(deleteRegistry.state))
   check('the log directory is removed', !existsSync(sessionDir))
   check('the cache row is dropped', cacheDeletes.includes('session-gone'), JSON.stringify(cacheDeletes))
