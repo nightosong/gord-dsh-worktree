@@ -1,6 +1,6 @@
 {
   "name": "gord-dsh-worktree",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Git worktree management for DeepSeek Harness: create isolated worktrees, start a session in one, review the uncommitted diff in the sidebar, manage archived sessions, and rename by double-click.",
   "keywords": [
     "dsh",
