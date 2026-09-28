@@ -136,28 +136,129 @@ const ROW_PATCHED = `					role: "treeitem",
 						onRename(node.id, row.title);
 					},`
 
+const TREE_MARKER = 'gord-dsh-worktree: nested worktree grouping (workspace tree)'
+
+const TREE_ORIGINAL = `		function owningParentFolder(path, parents) {
+			const child = folderPath(path);
+			let owner;
+			let length = -1;
+			for (const parent of parents) {
+				const root = folderPath(parent);
+				if (root.length > length && child !== root && child.startsWith(\`\${root}/\`)) {
+					owner = parent;
+					length = root.length;
+				}
+			}
+			return owner;
+		}`
+
+const TREE_PATCHED = `		// ${TREE_MARKER}
+		//
+		// The path rule below folds one Workspace into another only when the
+		// child's directory sits inside it. A worktree this plugin creates outside
+		// its project — the default parent is $DSH_HOME/worktree — is nobody's
+		// child by path, so those pairs are published as { <worktree path>:
+		// <project path> } in localStorage instead: a map rather than a fetch,
+		// because the first render after a reload needs the answer synchronously.
+		// Entries for paths that are gone fold nothing, and a parent that is not a
+		// registered Workspace — or that is the child itself, or inside it — is
+		// ignored, which is what keeps this honest when the map is stale.
+		function owningParentFolder(path, parents) {
+			const child = folderPath(path);
+			let owner;
+			let length = -1;
+			for (const parent of parents) {
+				const root = folderPath(parent);
+				if (root.length > length && child !== root && child.startsWith(\`\${root}/\`)) {
+					owner = parent;
+					length = root.length;
+				}
+			}
+			if (owner !== void 0) return owner;
+			try {
+				const declared = JSON.parse(globalThis.localStorage?.getItem("gord-worktree:parents") ?? "{}");
+				const parent = declared[path];
+				if (typeof parent !== "string" || !parents.includes(parent)) return void 0;
+				const root = folderPath(parent);
+				return root === child || child.startsWith(\`\${root}/\`) ? void 0 : parent;
+			} catch {
+				return;
+			}
+		}`
+
 /**
- * One behaviour, its marker, and the replacements that install it.
+ * One behaviour, and every way this plugin knows to install it.
  *
- * A group is the unit of idempotence: it is applied when its marker is absent,
- * so adding a group to this file still reaches an install that already carries
- * the others.
+ * A variant is the unit of idempotence: its marker means the file already
+ * carries it. Variants are tried newest first, and a marker found anywhere wins
+ * over an anchor set — which is what lets a patched file be recognized even
+ * after the anchors around it changed.
+ *
+ * `nativeWhen` is the honest escape for a behaviour the build grew on its own:
+ * 0.1.7 gave the session row the double-click rename this patch used to add, so
+ * there the patch has nothing left to install and says so instead of reporting
+ * a missing anchor.
  */
-const GROUPS = [
+const BEHAVIOURS = [
   {
-    marker: MARKER,
     what: 'nested worktree grouping',
-    replacements: [
-      { original: ORIGINAL, patched: PATCHED, what: 'the workspace grouping' },
-      { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
+    variants: [
+      {
+        family: 'the 0.1.6+ tree view',
+        marker: TREE_MARKER,
+        replacements: [{ original: TREE_ORIGINAL, patched: TREE_PATCHED, what: 'the worktree ownership rule' }],
+      },
+      {
+        family: 'the 0.1.5 inline grouping',
+        marker: MARKER,
+        replacements: [
+          { original: ORIGINAL, patched: PATCHED, what: 'the workspace grouping' },
+          { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
+        ],
+      },
     ],
   },
   {
-    marker: RENAME_MARKER,
     what: 'double-click to rename a session',
-    replacements: [{ original: ROW_ORIGINAL, patched: ROW_PATCHED, what: 'the session row' }],
+    nativeWhen: (text) => text.includes('onDoubleClick:') && text.includes('onRenameRequest('),
+    nativeNote: 'provided by dsh 0.1.7+',
+    variants: [
+      {
+        family: 'the 0.1.5/0.1.6 session row',
+        marker: RENAME_MARKER,
+        replacements: [{ original: ROW_ORIGINAL, patched: ROW_PATCHED, what: 'the session row' }],
+      },
+    ],
   },
 ]
+
+/**
+ * What this file is, per behaviour.
+ *
+ * `patched` and `original` are the two patchable states, `native` is a build
+ * that ships the behaviour itself, and `unknown` means the script has no anchor
+ * for this build and must not write anything.
+ */
+function inspect(text) {
+  return BEHAVIOURS.map((behaviour) => {
+    const patched = behaviour.variants.find((variant) => text.includes(variant.marker))
+    if (patched !== undefined) return { behaviour, variant: patched, status: 'patched' }
+    if (behaviour.nativeWhen?.(text) === true) return { behaviour, status: 'native' }
+    const variant = behaviour.variants.find((candidate) =>
+      candidate.replacements.every((entry) => text.includes(entry.original)),
+    )
+    if (variant !== undefined) return { behaviour, variant, status: 'original' }
+    return { behaviour, status: 'unknown' }
+  })
+}
+
+/**
+ * The tree view is what makes the grouping visible, and 0.1.6+ defaults to the
+ * plain per-workspace grouping — a worktree in its own group rather than under
+ * its project. Nothing here writes the user's view options, so the note is all
+ * this can say.
+ */
+const treeView = (rows) => rows.some((row) => row.variant?.family === 'the 0.1.6+ tree view')
 
 const argv = process.argv.slice(2)
 const flag = (name) => argv.includes(name)
@@ -212,18 +313,33 @@ if (target === undefined || !existsSync(target)) {
 
 const backup = `${target}.orig`
 const source = readFileSync(target, 'utf8')
-const pending = GROUPS.filter((group) => !source.includes(group.marker))
+const rows = inspect(source)
+const describeRole = (row) => {
+  if (row.status === 'patched') return ` (${row.variant.family})`
+  if (row.status === 'native') return ` (${row.behaviour.nativeNote})`
+  if (row.status === 'original') return ` (${row.variant.family})`
+  return ''
+}
+const pending = rows.filter((row) => row.status === 'original')
+const unknown = rows.filter((row) => row.status === 'unknown')
 
 if (flag('--check')) {
-  for (const group of GROUPS) {
-    process.stdout.write(`${source.includes(group.marker) ? 'patched ' : 'original'} ${group.what}\n`)
+  for (const row of rows) {
+    process.stdout.write(`${row.status.padEnd(8)} ${row.behaviour.what}${describeRole(row)}\n`)
   }
   process.stdout.write(`${target}\n`)
+  if (unknown.length > 0) {
+    for (const row of unknown) {
+      process.stderr.write(`not in the expected shape: ${row.behaviour.what} at ${target}\n`)
+    }
+    process.stderr.write('this DSH build differs; the patch needs updating rather than forcing\n')
+    process.exit(1)
+  }
   process.exit(pending.length === 0 ? 0 : 2)
 }
 
 if (flag('--revert')) {
-  if (pending.length === GROUPS.length) {
+  if (!rows.some((row) => row.status === 'patched')) {
     process.stdout.write(`nothing to revert: ${target} carries none of these patches\n`)
     process.exit(0)
   }
@@ -236,29 +352,32 @@ if (flag('--revert')) {
   process.exit(0)
 }
 
-if (pending.length === 0) {
-  process.stdout.write(`already patched: ${target}\n`)
-  process.exit(0)
-}
-
-// Every replacement of every pending group is checked before any is written, so
-// a build that has moved on leaves the file untouched instead of half patched.
-const missing = pending.flatMap((group) => group.replacements).filter((entry) => !source.includes(entry.original))
-if (missing.length > 0) {
-  for (const entry of missing) {
-    process.stderr.write(`not in the expected shape: ${entry.what} at ${target}\n`)
+if (unknown.length > 0) {
+  for (const row of unknown) {
+    process.stderr.write(`not in the expected shape: ${row.behaviour.what} at ${target}\n`)
   }
   process.stderr.write('this DSH build differs; the patch needs updating rather than forcing\n')
   process.exit(1)
 }
 
-// Kept before the first patch, so a revert always restores what shipped rather
-// than a previous patch of ours.
+if (pending.length === 0) {
+  process.stdout.write(`already patched: ${target}\n`)
+  process.exit(0)
+}
+
+// Anchors are matched per behaviour before anything is written, so a build that
+// has moved on leaves the file untouched instead of half patched.
 if (!existsSync(backup)) copyFileSync(target, backup)
 let next = source
-for (const group of pending) {
-  for (const entry of group.replacements) next = next.replace(entry.original, entry.patched)
+for (const row of pending) {
+  for (const entry of row.variant.replacements) next = next.replace(entry.original, entry.patched)
 }
 writeFileSync(target, next)
-for (const group of pending) process.stdout.write(`patched ${group.what}\n`)
+for (const row of pending) process.stdout.write(`patched ${row.behaviour.what}\n`)
+for (const row of rows) {
+  if (row.status === 'native') process.stdout.write(`nothing to do: ${row.behaviour.what} is ${row.behaviour.nativeNote}\n`)
+}
+if (treeView([...rows.filter((row) => row.status !== 'unknown')])) {
+  process.stdout.write('pick Group by \u2192 Workspace tree in the sidebar for the nesting to show\n')
+}
 process.stdout.write(`restart dsh web for the sidebar to pick it up\n`)

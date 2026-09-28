@@ -274,8 +274,10 @@ const fireDocument = (type, event) => {
 }
 
 const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+/** The browser bundle's text, kept so a naming scheme can be loaded again. */
+const clientSource = readFileSync(clientPath, 'utf8')
 // eslint-disable-next-line no-eval -- the bundle is a browser script, not a module
-;(0, eval)(readFileSync(clientPath, 'utf8'))
+;(0, eval)(clientSource)
 
 check('bundle registers with the module loader', registration !== undefined)
 check('bundle keeps the package id', registration?.id === 'gord-dsh-worktree', registration?.id)
@@ -296,12 +298,32 @@ const primitives = {
   IconBranchOutline16: icon,
   IconChevronDownOutline14: icon,
 }
-const bundle = registration.factory((name) => {
-  if (name === 'react') return React
-  if (name === 'react-dom') return ReactDOM
-  if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
-  throw new Error(`unexpected require(${JSON.stringify(name)})`)
-})
+
+/**
+ * Evaluate the browser bundle again and build its module against a given
+ * primitives package.
+ *
+ * The glyphs are resolved once, when the factory runs, so the only way to
+ * exercise a second naming scheme is to load the file again — and the bundle
+ * registers itself in `window.__ModuleLoader__` on every load, so a second load
+ * is exactly what the shell would do after a reload.
+ *
+ * @param primitivesStub - what `@deepseek-ai/dsh-client-ui-primitives` exports.
+ * @returns the bundle's module object.
+ */
+function loadModule(primitivesStub) {
+  registration = undefined
+  // eslint-disable-next-line no-eval -- the bundle is a browser script, not a module
+  ;(0, eval)(clientSource)
+  return registration.factory((name) => {
+    if (name === 'react') return React
+    if (name === 'react-dom') return ReactDOM
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitivesStub
+    throw new Error(`unexpected require(${JSON.stringify(name)})`)
+  })
+}
+
+const bundle = loadModule(primitives)
 check('bundle exports apply', typeof bundle.apply === 'function')
 check('bundle declares the slots injection', Array.isArray(bundle.inject) && bundle.inject.includes('slots'), JSON.stringify(bundle.inject))
 // The icon package is resolved through the boot graph's inject list, so a
@@ -335,6 +357,8 @@ const registeredDicts = []
 const createdSessions = []
 /** Session ids the chip asked the controller to select. */
 const openedSessions = []
+/** Session ids the chip revealed through the workspace view, in order. */
+const navigationCalls = []
 /** Slot names the plugin asked to inject into, in order. */
 const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
@@ -377,6 +401,14 @@ root.plugin({
       },
       open: (id) => {
         openedSessions.push(id)
+      },
+    })
+    // Navigation belongs to the workspace view from 0.1.6 on: `sessions.open`
+    // left the controller, and this is the call a sidebar row makes. Provided
+    // here so the modern path, not the fallback, is what the suite exercises.
+    serviceCtx.provide('uiWorkspace', {
+      openSession: (id) => {
+        navigationCalls.push(id)
       },
     })
     serviceCtx.provide('slots', {
@@ -754,8 +786,13 @@ check(
   JSON.stringify(createdSessions.slice(sessionsBeforeCreate)),
 )
 check(
-  'creating opens that session',
-  openedSessions.includes(createdSessions.at(-1)?.sessionId),
+  'creating reveals that session through the workspace view',
+  navigationCalls.includes(createdSessions.at(-1)?.sessionId),
+  JSON.stringify({ revealed: navigationCalls, created: createdSessions.at(-1) }),
+)
+check(
+  'the controller\'s removed `open` is not what opens it',
+  !openedSessions.includes(createdSessions.at(-1)?.sessionId),
   JSON.stringify({ opened: openedSessions, created: createdSessions.at(-1) }),
 )
 // The client does not adopt on its own — the host route does, because only the
@@ -1140,6 +1177,203 @@ slots = []
 cleanups = {}
 const truncatedTree = await settle(props)
 check('a truncated archive says so', textsOf(truncatedTree).join(' ').includes('只列出最近的 1 条'), textsOf(truncatedTree).join(' ').slice(-260))
+
+process.stdout.write('\nother builds: navigation and glyph names\n')
+
+/**
+ * Walk a tree and collect every element type it would hand React.
+ *
+ * `undefined` here is the failure this section exists for: React rejects it as
+ * an element type and takes the whole surface down, which is what a glyph the
+ * running primitives package renamed away used to do.
+ */
+function typesOf(node, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  out.push(node.type)
+  for (const child of node.children ?? []) typesOf(child, out)
+  return out
+}
+const missingTypes = (tree) => typesOf(tree).filter((type) => type === undefined || type === null)
+
+/**
+ * Register a bundle module against a throwaway context and hand back its chip,
+ * its guide icon, and what it asked the world to do.
+ *
+ * The harness above drives one module against one world; this one exists for
+ * the questions that need a different one — a build whose glyphs are named
+ * differently, or an older build with no workspace view to navigate through.
+ *
+ * @param module - a module from `loadModule`.
+ * @param options.withNavigation - provide `uiWorkspace`, as 0.1.6 and later do.
+ * @returns the registered chip component, the guide icon, and the recorder.
+ */
+async function mountSurfaces(module, options = {}) {
+  const seen = { chip: undefined, guide: undefined }
+  const record = { created: [], opened: [], revealed: [] }
+  const ctx = new Context()
+  ctx.plugin({
+    name: 'test:other-build-services',
+    apply(serviceCtx) {
+      serviceCtx.provide('locale', {
+        register: () => () => {},
+        bind: () => (key) => bundle.DICT.zh[key] ?? key,
+      })
+      serviceCtx.provide('sessions', {
+        list: { getSnapshot: () => sessionList, subscribe: () => () => {} },
+        create: (opts) => {
+          const sessionId = `other-${record.created.length + 1}`
+          record.created.push({ workspaceId: opts.workspaceId, sessionId })
+          return Promise.resolve(sessionId)
+        },
+        open: (id) => record.opened.push(id),
+      })
+      if (options.withNavigation !== false) {
+        serviceCtx.provide('uiWorkspace', { openSession: (id) => record.revealed.push(id) })
+      }
+      serviceCtx.provide('slots', {
+        inject: (name, factory) => {
+          factory()
+          return () => {}
+        },
+        register(spec, component) {
+          if (spec.name === 'conversation.input.dock') seen.chip = component
+          return () => {}
+        },
+      })
+      serviceCtx.provide('sidebarRightTabs', {
+        register(definition) {
+          seen.guide = definition.guide?.[0]?.icon
+          return () => {}
+        },
+      })
+    },
+  })
+  // Through `plugin`, not a bare `apply`: the bundle's own `inject` list is what
+  // makes `ctx.locale` readable as a property, and calling `apply` directly
+  // would sail past the contract this suite exists to check.
+  ctx.plugin({ name: 'gord-dsh-worktree:other-build', inject: module.inject, apply: module.apply })
+  for (let tick = 0; tick < 20 && typeof seen.chip !== 'function'; tick++) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return { ...seen, record }
+}
+
+/** Render one chip component to quiescence, as `renderChip` does for the main one. */
+async function renderOtherChip(component, passes = 40) {
+  let tree
+  for (let pass = 0; pass < passes; pass++) {
+    dirty = false
+    beginRender()
+    tree = resolve(component({ session: blankSession, onClose: () => {} }))
+    for (const effect of pendingEffects.splice(0)) effect()
+    for (let flush = 0; flush < 4; flush++) await new Promise((resolve) => setImmediate(resolve))
+    if (!dirty) break
+  }
+  return tree
+}
+
+/** Open the picker and take its new-worktree entry, the one path that opens a session. */
+async function pickNewWorktree(component) {
+  slots = []
+  cleanups = {}
+  const closed = await renderOtherChip(component)
+  findByClass(closed, 'gord-dsh-worktree-seat')?.props.onClick()
+  const open = await renderOtherChip(component)
+  findButton(open, '新建工作树')?.props.onClick()
+  return renderOtherChip(component)
+}
+
+const withNavigation = await mountSurfaces(loadModule(primitives))
+await pickNewWorktree(withNavigation.chip)
+check(
+  'a 0.1.6+ build reveals the new session through the workspace view',
+  withNavigation.record.revealed.length === 1 && withNavigation.record.revealed[0] === withNavigation.record.created.at(-1)?.sessionId,
+  JSON.stringify(withNavigation.record),
+)
+check(
+  'and does not call the controller method 0.1.6 removed',
+  withNavigation.record.opened.length === 0,
+  JSON.stringify(withNavigation.record),
+)
+
+const withoutNavigation = await mountSurfaces(loadModule(primitives), { withNavigation: false })
+await pickNewWorktree(withoutNavigation.chip)
+check(
+  'a composition with no workspace view still opens the session the old way',
+  withoutNavigation.record.opened.length === 1 && withoutNavigation.record.opened[0] === withoutNavigation.record.created.at(-1)?.sessionId,
+  JSON.stringify(withoutNavigation.record),
+)
+
+// The naming schemes primitives has shipped: the size-suffixed exports of
+// 0.1.5/0.1.6, the weight-suffixed ones 0.1.7 renamed them to, and a build that
+// renames them again. Every one must load and render; the third is the shape
+// that used to throw, and the second is the one an upgrade to 0.1.7 produced.
+const schemes = [
+  {
+    name: '0.1.5/0.1.6 glyph names',
+    draws: true,
+    stub: {
+      IconBranchOutline16: icon,
+      IconChevronDownOutline14: icon,
+      IconTrashOutline16: icon,
+      IconEditOutline16: icon,
+    },
+  },
+  {
+    name: '0.1.7 glyph names',
+    draws: true,
+    stub: {
+      IconBranchOutlineRegular: icon,
+      IconChevronDownOutlineRegular: icon,
+      IconTrashOutlineRegular: icon,
+      IconEditOutlineRegular: icon,
+    },
+  },
+  { name: 'glyphs renamed again', draws: false, stub: {} },
+]
+for (const scheme of schemes) {
+  // Every element type the stub is ever handed, before `resolve` inlines the
+  // components: an icon that renders nothing still had to be a defined type,
+  // and that is exactly what a renamed export used not to be.
+  const builtTypes = []
+  const createElement = React.createElement
+  React.createElement = (type, props, ...children) => {
+    builtTypes.push(type)
+    return createElement(type, props, ...children)
+  }
+  let surfaces
+  let tree
+  try {
+    surfaces = await mountSurfaces(loadModule(scheme.stub))
+    tree = await pickNewWorktree(surfaces.chip)
+  } finally {
+    React.createElement = createElement
+  }
+  const seatIcon = findByClass(tree, 'gord-dsh-worktree-seatIcon')
+  check(`${scheme.name}: the chip loads and renders`, findByClass(tree, 'gord-dsh-worktree-seat') !== undefined)
+  check(
+    `${scheme.name}: no element type is missing`,
+    !builtTypes.some((type) => type === undefined || type === null) && missingTypes(tree).length === 0,
+    JSON.stringify(builtTypes.filter((type) => type === undefined || type === null)),
+  )
+  check(`${scheme.name}: the Changes guide has an icon`, typeof surfaces.guide === 'function', String(surfaces.guide))
+  if (scheme.draws) {
+    check(
+      `${scheme.name}: the control draws both glyphs`,
+      seatIcon !== undefined && findByClass(tree, 'gord-dsh-worktree-chevron') !== undefined,
+    )
+    check(`${scheme.name}: the seat glyph is sized`, seatIcon?.props.size === 16, JSON.stringify(seatIcon?.props))
+  } else {
+    // The honest degradation: a build that renamed the glyphs away loses the
+    // artwork, and the control keeps its shape and its label.
+    check(`${scheme.name}: the control keeps its label instead of throwing`, textsOf(tree).join(' ').includes('当前工作树'), textsOf(tree).join(' ').slice(0, 200))
+  }
+}
+
+// A structural guard on top of the behavioural one: every glyph has to come
+// through the resolver, because a direct `primitives.<name>` element type is
+// `undefined` on any build that does not export that exact name.
+check('no direct primitives element type is left', !/createElement\(\s*primitives\./.test(clientSource))
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

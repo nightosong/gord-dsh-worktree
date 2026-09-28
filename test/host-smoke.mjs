@@ -9,7 +9,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -394,6 +394,75 @@ try {
   const createTool = registered.get('worktree_create')
   check('worktree_create explains the mid-session flow', createTool.description.includes('workdir'), createTool.description.slice(-200))
   check('worktree_create says the session cannot be moved', createTool.description.includes('cannot be moved'), createTool.description.slice(-200))
+
+  process.stdout.write('\nsettings service shapes\n')
+  // 0.1.5/0.1.6 lent every plugin a settings namespace, so the panel could edit
+  // this plugin's defaults in place. 0.1.7 dropped that for a profile-wide form
+  // model: the Config schema the profile entry already carries is the whole
+  // declaration, and the page writes the patch. Calling `register` there is a
+  // TypeError inside the plugin's own child scope — a failure that reads as
+  // "defaults are not editable" rather than as a plugin that refused to load —
+  // so both shapes have to be survivable *and* the default has to arrive.
+  const applyWithSettings = (settings) => {
+    const tools = new Map()
+    const ctx = {
+      tools: {
+        register(definition) {
+          tools.set(definition.name, definition)
+          return () => tools.delete(definition.name)
+        },
+      },
+      effect: (callback) => {
+        callback()
+        return () => {}
+      },
+      get: () => undefined,
+      on: () => {},
+      inject(deps, callback) {
+        if (deps.every((name) => ctx[name] !== undefined)) callback(ctx)
+      },
+      settings,
+    }
+    plugin.apply(ctx, { defaultParent: '' })
+    return tools
+  }
+
+  const registeredNamespaces = []
+  const namespaceParent = join(scratch, 'from-settings')
+  const namespaceTools = applyWithSettings({
+    register(ns, schema, options) {
+      registeredNamespaces.push({ ns, base: options?.base })
+      return { get: () => ({ defaultParent: namespaceParent }), watch: () => () => {} }
+    },
+  })
+  check(
+    'a build with settings namespaces gets one registered',
+    registeredNamespaces.length === 1 && registeredNamespaces[0].ns === 'gord-worktree',
+    JSON.stringify(registeredNamespaces),
+  )
+  check('the namespace starts from the entry config', registeredNamespaces[0]?.base !== undefined, JSON.stringify(registeredNamespaces))
+  const fromNamespace = await namespaceTools.get('worktree_create').execute({ branch: 'worktree/settings-parent' }, exec)
+  check(
+    'the panel default decides where that worktree goes',
+    dirname(fromNamespace.path) === namespaceParent,
+    JSON.stringify({ path: fromNamespace.path, parent: namespaceParent }),
+  )
+
+  let profileError
+  let fromProfile
+  try {
+    const profileTools = applyWithSettings({ configure: () => () => {}, describe: () => [] })
+    check('tools register without a settings namespace too', profileTools.size === 5, String(profileTools.size))
+    fromProfile = await profileTools.get('worktree_create').execute({ branch: 'worktree/profile-parent' }, exec)
+  } catch (error) {
+    profileError = error
+  }
+  check('a build with no settings namespace is not an error', profileError === undefined, String(profileError))
+  check(
+    'and the default parent falls back to the harness home',
+    fromProfile !== undefined && dirname(fromProfile.path) === defaultWorktreeParent(),
+    JSON.stringify({ path: fromProfile?.path, parent: defaultWorktreeParent() }),
+  )
 
   // The Changes tab answers with the working tree against HEAD, so these probes
   // are about the shapes a real working tree can be in — a rename is not an

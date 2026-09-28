@@ -34,7 +34,24 @@ Then restart `dsh web` (a reload is enough once the bundle is on the layer stack
 **Settings → Worktrees**. Nothing else needs editing: the package declares `dsh.bundle.patch`, so the
 CLI adds it to the profile's bundle stack itself.
 
-Requires dsh `0.1.5-rc.1` or newer.
+Supports dsh `>=0.1.5-rc.1 <0.2.0` — the whole 0.1.x line from `0.1.5-rc.1` on. Three of them are
+tested: `0.1.5-rc.1`, `0.1.6-alpha.2` and `0.1.7-rc.2`. Glyph export names, session navigation and the
+plugin settings interface all changed across that span, and the plugin handles each shape — see
+*Across DSH versions* below.
+
+## Across DSH versions
+
+Three interfaces a plugin can see changed between 0.1.5 and 0.1.7. The plugin keeps the old call as a
+fallback and uses the new one where it exists, so one build runs on either line:
+
+| Interface | 0.1.5 / 0.1.6 | 0.1.7 on | What the plugin does |
+| --------- | ------------- | -------- | -------------------- |
+| Glyph export names | `IconTrashOutline16` and friends, size-suffixed | `IconTrashOutlineRegular` and friends, weight-suffixed | Tries both names, draws nothing if neither exists, and never hands React an `undefined` element type |
+| Session navigation | `sessions.open(id)` | `uiWorkspace.openSession(id)`; `sessions.open` is gone | Reveals through the workspace view, falls back to the old call when there is none |
+| Plugin settings namespace | `settings.register(ns, schema)` | no such method; the profile's own form model replaces it | Registers a namespace only where that method exists, and reads the entry's config directly otherwise |
+
+Both `uiWorkspace` and `settings` are read optionally (`ctx.get`), so a profile composed without a
+workspace view, or without settings, loses one feature rather than failing to apply.
 
 ## In detail
 
@@ -79,25 +96,38 @@ in appears in the sidebar beside the project, titled by its directory code, exac
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
 
-#### The sidebar patch: nesting, and double-click to rename
+#### The sidebar patch: nesting a worktree under its project
 
-Two things the sidebar should do and does not: show a worktree's sessions under the project they were
-cut from, and rename a session by double-clicking its row. Both are patched into DSH by this
-repository:
+The sidebar should show a worktree's sessions under the project they were cut from, rather than as a
+project of their own, and before 0.1.7 it also lacked a double-click rename. Both are patched into DSH's
+workspace bundle by this repository:
 
 ```sh
-npm run patch:sidebar     # then restart dsh web
-npm run unpatch:sidebar   # to restore the shipped bundle
+npm run patch:sidebar                 # then restart dsh web
+npm run patch:sidebar -- --check      # one status line per behaviour; exits 0 only when all are in place
+npm run unpatch:sidebar               # to restore the shipped bundle
 ```
 
-**Nesting** changes one small function — `groupByWorkspace`, the whole of the sidebar's grouping — so a
-worktree's sessions fold into the project's group and the worktree stops being a group of its own. That
-is how Codex reads, and for the same reason: it groups threads by project and treats the worktree as a
-thread attribute, while DSH's grouping key is the directory and its records have no parent field. Two
-rules decide the parent: a workspace whose directory is inside another's, and a parent map this plugin
-publishes for worktrees kept outside the project — which is the default, `$DSH_HOME/worktree/<code>`.
-The map is read from `localStorage` because the first render after a reload already needs the answer and
-a fetch would land too late.
+The three version lines have different shapes, and the script decides from the bundle's actual contents
+rather than from a version number — patching only the part that build is missing:
+
+| DSH | Nesting | Double-click rename |
+| --- | ------- | ------------------- |
+| 0.1.7 on | `owningParentFolder` is extended: besides path containment it reads the parent map this plugin publishes | core ships it; the script reports `native` and does not touch it |
+| 0.1.6 | the same function (that line already has the *Workspace tree* view and this helper) | adds `onDoubleClick` to the session row |
+| 0.1.5 | `groupByWorkspace` — the whole of the sidebar's grouping — folds a worktree's sessions into the project's group | the same row prop |
+
+**From 0.1.6 on, the nesting only shows once the sidebar's *Group by* is set to *Workspace tree*.** Those
+lines made grouping a view option and still default to *Workspace*, where a worktree is a group of its
+own. The script does not write the user's view options; it says so when it patches.
+
+Two rules decide the parent: a workspace whose directory is inside another's, and a parent map this
+plugin publishes for worktrees kept outside the project — which is the default,
+`$DSH_HOME/worktree/<code>`. From 0.1.6 that second rule lives in `owningParentFolder`, the single
+source of the tree's parent map and its only call site; on 0.1.5 it lives in `groupByWorkspace`. The map
+is read from `localStorage`, because the first render after a reload already needs the answer and a fetch
+would land too late. Entries naming a path that is gone, the child itself, a directory inside it, or a
+parent that is not a registered workspace are all ignored.
 
 **Double-click to rename** adds one prop to the session row, calling the handler the row's own menu
 already calls — so the dialog, its validation and its error text are core's, not a second copy of them.
@@ -114,18 +144,21 @@ is a dozen lines, and the rename hook is one prop.
 **A DSH upgrade replaces the file, so re-run `npm run patch:sidebar` after one.** The script is
 idempotent, keeps the shipped bundle at `client.js.orig` before the first patch, and refuses to guess if
 the code is not in the shape it expects — a newer DSH needs the patch updated rather than forced. Each
-patch carries its own marker, so an install that already has one still receives the other, and a patch
-is only written once every replacement it needs has been found. `npm run patch:sidebar -- --check` prints
-one line per patch and exits non-zero unless all of them are applied.
+behaviour carries its own marker, so an install that already has one still receives the other, and a
+replacement is only written once every anchor it needs has been found. `--check` prints `patched`,
+`original` or `native` per behaviour, and reports `not in the expected shape` with a non-zero exit for a
+behaviour it does not recognize — which is what a DSH upgrade that moved these functions again looks
+like.
 
 #### Keeping the sidebar clean
 
 The worktree's workspace is titled after its project — `repo · 1dda6ec0`, not a bare `1dda6ec0` — because
-the title is the only place that relationship can be shown. The sidebar groups by workspace, one group per
-directory, with no nesting and no hidden flag on the record, so a worktree is a group of its own whether or
-not it looks like one. Codex reads cleanly here for a structural reason rather than a smarter trick: it
-groups threads by *project* and treats the worktree as an attribute of a thread, so a worktree thread simply
-lands under its project. DSH's grouping key is the directory, so there is nothing to nest into.
+the title is the one place the relationship is visible without the patch. With it applied, the sidebar's
+*Group by → Workspace tree* mode is what folds the worktree under its project; the default *Workspace*
+mode, still, is one group per directory. Codex reads cleanly here for a structural reason rather than a
+smarter trick: it groups threads by *project* and treats the worktree as an attribute of a thread, so a
+worktree thread simply lands under its project. DSH's grouping key is the directory, which is why the
+patch has to add the parent relation.
 
 If you would rather not see the groups at all, the shell already has the mode for it: **View options →
 Group by → In one list** in the sidebar header. Sessions from every workspace become one recency-ordered
@@ -289,8 +322,11 @@ profile's own `node_modules`, exactly as for every other plugin.
 Because the host half is mounted as a bundle layer, host-side changes need a `dsh web` restart; client
 changes reload with the GUI's normal module reload.
 
-`npm test` runs both smoke suites — the host one against a throwaway git repository, the client one
-against a minimal React runtime — with no test framework to install.
+`npm test` runs three smoke suites — the host one against a throwaway git repository, the client one
+against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), and
+the patch tool against a copy of the **installed** DSH bundle (proving every behaviour is recognized,
+applying is repeatable and reversible, and the install itself is never written) — with no test framework
+to install.
 
 ## License
 
