@@ -236,6 +236,14 @@ workspace and into the browser's *Ungrouped* bucket, as an empty group that surv
 reloaded. Keeping the entry is what makes the session stay hidden, immediately and after every reload;
 the panel drops these ids from its own listing because there is nothing left to show.
 
+They do not stay forever: on every load the plugin forgets the archived ids whose log is already
+gone. That is the one safe moment for it — the host has just scanned its sessions off disk, and every
+client that connects afterwards builds its list from the same scan, so those ids cannot come back as
+rows. While the app runs the entry is still doing its job, because the browser is holding that
+deleted row. Left alone they only accumulate, and the archived filter DSH 0.1.7 added to the sidebar
+("show archived", "only archived") renders the leftovers as an *Ungrouped* group whose rows have no
+log left to delete.
+
 Each row carries one date, and it is the session's last write — read off the newest mtime in its log
 directory during the same scan that measures its size. That is the honest answer to "when was this last
 used", which is the question a list of archived sessions is actually asked. A projection could answer

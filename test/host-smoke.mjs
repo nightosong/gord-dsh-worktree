@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -697,6 +697,68 @@ try {
   check('a session with no projection source still lists, without a title', untitled.records[0].title === undefined, JSON.stringify(untitled.records[0]))
   const noRegistryList = await archive.listArchived({ registry: undefined, now: () => 1 })
   check('listing without a registry is explained', noRegistryList.ok === false && noRegistryList.error === 'no-registry', JSON.stringify(noRegistryList))
+
+  // Tombstones are forgotten at load, which is the one moment an id with no log
+  // cannot come back as a row: the host has just read its sessions off disk and
+  // no client has connected yet. Keeping them is what hides a deleted session
+  // while the app runs; keeping them forever is what hands 0.1.7's archived
+  // filter an Ungrouped group of rows with nothing left to delete.
+  await archive.syncArchiveRecord({ now: () => 8000 }, ['session-gone', 'session-kept'])
+  const forgetRegistry = fakeRegistry(['session-gone', 'session-kept'])
+  const forgotten = await archive.forgetDeletedSessions({ registry: forgetRegistry, now: () => 9000 })
+  check('a log-less tombstone is forgotten at load', forgotten.ok === true && forgotten.removed === 1, JSON.stringify(forgotten))
+  check('the session that still has a log stays archived', forgetRegistry.archivedSessionIds.join() === 'session-kept', JSON.stringify(forgetRegistry.state))
+  check('the forgotten row leaves the record file too', (await archive.readArchiveRecordFile(recordPath)).archivedAt['session-gone'] === undefined, JSON.stringify(await archive.readArchiveRecordFile(recordPath)))
+  const forgottenAgain = await archive.forgetDeletedSessions({ registry: forgetRegistry, now: () => 9000 })
+  check('forgetting again changes nothing', forgottenAgain.removed === 0 && forgetRegistry.archivedSessionIds.join() === 'session-kept', JSON.stringify(forgottenAgain))
+  const nothingArchived = await archive.forgetDeletedSessions({ registry: fakeRegistry([]), now: () => 9000 })
+  check('an empty archive set is left alone', nothingArchived.ok === true && nothingArchived.removed === 0, JSON.stringify(nothingArchived))
+  const noRegistryForget = await archive.forgetDeletedSessions({ registry: undefined, now: () => 9000 })
+  check('forgetting without a registry refuses rather than guessing', noRegistryForget.ok === false && noRegistryForget.error === 'no-registry', JSON.stringify(noRegistryForget))
+
+  // A sessions root that cannot be read is not evidence of a deletion: every id
+  // would look gone, every tombstone would be dropped, and sessions that are
+  // still on disk would come back into the sidebar. The guard is what makes
+  // that impossible.
+  const sessionsRoot = dshHomePath('sessions')
+  renameSync(sessionsRoot, `${sessionsRoot}.moved`)
+  try {
+    const unreadable = await archive.forgetDeletedSessions({ registry: fakeRegistry(['session-kept']), now: () => 9000 })
+    check('an unreadable sessions root forgets nothing', unreadable.ok === false && unreadable.error === 'unreadable-sessions-root', JSON.stringify(unreadable))
+  } finally {
+    renameSync(`${sessionsRoot}.moved`, sessionsRoot)
+  }
+
+  // The same sweep through the plugin's own load path, so what is under test
+  // here is the wiring rather than the function alone.
+  const loadRegistry = fakeRegistry(['session-gone', 'session-kept'])
+  let markPruned = () => {}
+  const pruneSettled = new Promise((resolve) => { markPruned = resolve })
+  const writeState = loadRegistry.setState.bind(loadRegistry)
+  loadRegistry.setState = async (next) => {
+    await writeState(next)
+    markPruned()
+  }
+  const loadCtx = {
+    tools: { register: () => () => {} },
+    effect: (callback) => {
+      callback()
+      return () => {}
+    },
+    get: () => undefined,
+    on: () => {},
+    inject(deps, callback) {
+      if (deps.every((name) => loadCtx[name] !== undefined)) callback(loadCtx)
+    },
+    workspaceRegistry: loadRegistry,
+  }
+  plugin.apply(loadCtx, { defaultParent: '' })
+  const outcome = await Promise.race([
+    pruneSettled.then(() => 'pruned'),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 2000)),
+  ])
+  check('the plugin forgets deleted sessions as it loads', outcome === 'pruned', String(outcome))
+  check('and only the ones that are gone', loadRegistry.archivedSessionIds.join() === 'session-kept', JSON.stringify(loadRegistry.state))
 
 } finally {
   rmSync(scratch, { recursive: true, force: true })

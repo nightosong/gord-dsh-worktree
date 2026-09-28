@@ -70,13 +70,27 @@ const installedStatuses = statusesOf(located.stdout)
 check('every behaviour is recognized', installedStatuses.length >= 2 && !installedStatuses.includes('unknown'), JSON.stringify(installedStatuses))
 check('--check does not write', located.status === 0 || located.status === 2, `exit ${located.status}`)
 
-const original = readFileSync(installed, 'utf8')
+const installedText = readFileSync(installed, 'utf8')
 const work = mkdtempSync(join(tmpdir(), 'gord-worktree-patch-'))
 const copy = join(work, 'client.js')
 copyFileSync(installed, copy)
+// The backup travels with the file, exactly as the tool left it on a machine
+// where it has been run: without it a patched copy is a file the tool refuses
+// to guess a shipped shape for.
+if (existsSync(`${installed}.orig`)) copyFileSync(`${installed}.orig`, `${copy}.orig`)
 
 try {
   process.stdout.write('\npatch tool: patching a copy\n')
+
+  // The installed bundle may already be patched, and that is the normal state on
+  // a machine where the tool has been run — so the copy is put back into the
+  // shipped shape first, and that is the shape the assertions below start from.
+  // Without this the test would quietly pass or fail depending on whether
+  // somebody had patched their install, which is not what it is testing.
+  const before = run(['--revert', '--target', copy])
+  check('a copy starts from the shipped shape', before.status === 0, `${before.status} ${before.stderr.trim()}`)
+  const original = readFileSync(copy, 'utf8')
+  check('the shipped shape is the unpatched bundle', !original.includes('gord-dsh-worktree: nested worktree grouping'))
 
   const applied = run(['--target', copy])
   check('applying succeeds', applied.status === 0, `${applied.status} ${applied.stderr.trim()}`)
@@ -195,7 +209,7 @@ try {
     check('the legacy grouping patch is what was applied instead', readFileSync(copy, 'utf8').includes('gord-dsh-worktree: nested worktree grouping'))
   }
 
-  check('the installed bundle was never written', readFileSync(installed, 'utf8') === original)
+  check('the installed bundle was never written', readFileSync(installed, 'utf8') === installedText)
 } finally {
   rmSync(work, { recursive: true, force: true })
 }
