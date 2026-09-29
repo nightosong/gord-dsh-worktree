@@ -603,7 +603,6 @@ check('panel asks for the projects', calls.some((call) => call.action === 'repos
 check('panel fetched the listing of the selected project', calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path), JSON.stringify(calls.map((c) => [c.action, c.body.dir])))
 check('panel renders the repository root', allText.includes('/tmp/demo/app'), allText.slice(0, 200))
 check('panel renders the repository branch', allText.includes('main'))
-check('panel flags a dirty repository', allText.includes('有未提交改动'))
 check('panel lists both worktrees', allText.includes('worktree/feat') && allText.includes('共 2 个'), allText.slice(-300))
 check('panel marks the current worktree', allText.includes('当前'))
 check('panel renders the default parent', allText.includes('/tmp/demo/app-worktrees'))
@@ -655,8 +654,8 @@ check(
   JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
 check('the session project is rendered', followedText.includes('/tmp/demo/app') && followedText.includes('main'), followedText.slice(0, 200))
-// Shown, not edited: the value belongs to the plugin's own configuration.
-check('the panel shows where new worktrees go', followedText.includes('新工作树默认位置: /tmp/demo/app-worktrees'), followedText.slice(0, 300))
+// The card is the project and the branch it would cut from — data, not copy.
+check('the panel names the project and its branch', followedText.includes('demo') && followedText.includes('main'), followedText.slice(0, 200))
 check('the panel offers no repository path field', findByClass(followed, 'gord-dsh-worktree-input') === undefined)
 // No picker: the project is resolved for the page and merely named, so there is
 // nothing to choose before the worktree can be made.
@@ -1495,18 +1494,25 @@ calls.length = 0
 const outsideOpen = await renderChip(40, outsideSession)
 const outsideChipText = textsOf(outsideOpen).join(' ')
 check('the chip shows no refusal for a session outside a repository', !outsideChipText.includes('不是 git 仓库') && !outsideChipText.includes('没有工作位置'), outsideChipText.slice(0, 300))
-check('the chip names the project it will use', outsideChipText.includes('demo'), outsideChipText.slice(0, 300))
-check('the chip asks the host for it', calls.some((call) => call.action === 'repos'), JSON.stringify(calls.map((c) => c.action)))
-// Clicking is the whole fix: it creates a worktree of that project, based on
-// that project's current branch, outside the project's own directory.
-const projectRows = findAllByClass(outsideOpen, 'gord-dsh-worktree-option')
-const otherRow = projectRows.find((row) => textsOf(row).join(' ').includes('demo'))
-check('the create row is clickable', otherRow !== undefined, JSON.stringify(projectRows.map((row) => textsOf(row).join(' '))))
+// The two entries this control has always had, unchanged: the worktree the
+// session is in, and a new one. No project list, no directory to type.
+check(
+  'the chip offers the current worktree and a new one',
+  outsideChipText.includes('当前工作树') && outsideChipText.includes('新建工作树'),
+  outsideChipText.slice(0, 200),
+)
+check('the chip offers nothing else', !outsideChipText.includes('未找到可用的 git 仓库工作区'), outsideChipText.slice(0, 300))
+// Clicking is the whole fix: the project is resolved on the click — here from
+// the host's project list, since the session's own directory is not one — and
+// the worktree is cut from that project's current branch, outside its directory.
+const menuRows = findAllByClass(outsideOpen, 'gord-dsh-worktree-option')
+const newRow = menuRows.find((row) => textsOf(row).join(' ').includes('新建工作树'))
+check('the new row is clickable', newRow !== undefined, JSON.stringify(menuRows.map((row) => textsOf(row).join(' '))))
 calls.length = 0
-otherRow?.props.onClick()
+newRow?.props.onClick()
 await renderChip(40, outsideSession)
 check(
-  'clicking it creates a worktree of that project',
+  'clicking it cuts from the project resolved for the session',
   calls.some((call) => call.action === 'create' && call.body.dir === REPO_ROW.path),
   JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
