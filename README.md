@@ -264,6 +264,11 @@ open a question mid-run (ask once, as the opening move); never wait inside the t
 a long query goes to a background job; keep the context small, because it is re-sent on every step; and
 skip the survey that cannot change the conclusion.
 
+It deliberately picks no model. A preset row is composition, not configuration: this one carries no
+`llm-*` and no `agent-default-model` row, and no `model` field — Fast mode runs on whatever model the
+profile configures, so the same preset works for every user. The only reference to a model is the
+persona's `{{model}}` placeholder, which merely names the configured model so the agent knows what it is.
+
 ### Concurrent read-only tool calls
 
 `dsh-agent-loop` runs a step's tool calls in parallel only when each call is classified concurrency-safe,
