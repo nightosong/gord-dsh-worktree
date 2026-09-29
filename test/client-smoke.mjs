@@ -1428,6 +1428,29 @@ for (const scheme of schemes) {
 // `undefined` on any build that does not export that exact name.
 check('no direct primitives element type is left', !/createElement\(\s*primitives\./.test(clientSource))
 
+process.stdout.write('\ncomposer chip: session outside a repository\n')
+// The chip cuts its worktree from the repository the session sits in. A session
+// parked in a container directory has none to cut from, and the menu has to say
+// so — and say what to do — instead of leaving a refusal that reads as a broken
+// button. Fresh root: the chip keeps its own hook store.
+slots = []
+cleanups = {}
+const outsideSession = { id: 's1', cwd: NON_REPO_DIR, blank: true }
+const outsideClosed = await renderChip(40, outsideSession)
+findByClass(outsideClosed, 'gord-dsh-worktree-seat')?.props.onClick()
+const outsideOpen = await renderChip(40, outsideSession)
+const outsideText = textsOf(outsideOpen).join(' ')
+check(
+  'the chip names the directory it could not use',
+  outsideText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`),
+  outsideText.slice(0, 300),
+)
+check(
+  'the chip says what to do instead',
+  outsideText.includes(`当前会话的工作位置 ${NON_REPO_DIR} 不是 git 仓库`),
+  outsideText.slice(0, 300),
+)
+
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')
 check('english dictionary has real copy', bundle.DICT.en['nav.label'] === 'Worktrees', bundle.DICT.en['nav.label'])
