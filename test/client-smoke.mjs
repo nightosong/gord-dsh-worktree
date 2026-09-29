@@ -362,8 +362,10 @@ const navigationCalls = []
 /** Slot names the plugin asked to inject into, in order. */
 const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
+// Mirrors the real controller list, which carries `byId` and no `current`: the
+// current session comes from `uiSession` (below). Reading `current` off this
+// snapshot is what made the settings page report an unknown session directory.
 const sessionList = {
-  current: 's1',
   byId: { s1: { id: 's1', cwd: '/tmp/demo/app', blank: true } },
 }
 root.plugin({
@@ -401,6 +403,17 @@ root.plugin({
       },
       open: (id) => {
         openedSessions.push(id)
+      },
+    })
+    // `uiSession.adapter.current` is a binding source, not a plain id: the
+    // snapshot carries the session key (the shipped code reads `.value.key`
+    // for the same id in `publishMain`).
+    serviceCtx.provide('uiSession', {
+      adapter: {
+        current: {
+          getSnapshot: () => ({ key: 's1' }),
+          subscribe: () => () => {},
+        },
       },
     })
     // Navigation belongs to the workspace view from 0.1.6 on: `sessions.open`
