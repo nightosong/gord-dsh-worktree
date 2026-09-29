@@ -624,6 +624,9 @@ const refused = await settle(props)
 const refusedText = textsOf(refused).join(' | ')
 check('a session outside any repository is refused', !calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'), JSON.stringify(calls.map((call) => call.body.dir)))
 check('the refusal names the directory it checked', refusedText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`), refusedText.slice(0, 300))
+// The page must also say which session directory it is following: a refusal is
+// otherwise indistinguishable from "the repository you typed is wrong".
+check('the page names the session directory it follows', refusedText.includes(`当前会话目录：${NON_REPO_DIR}`), refusedText.slice(0, 300))
 sessionList.byId.s1.cwd = '/tmp/demo/app'
 // Leave the page where the rest of the suite expects it: the probes above
 // deliberately parked it on a directory that is not a repository, and the

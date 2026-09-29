@@ -406,7 +406,7 @@ point at another one.
 
 The *Settings → Worktrees* page asks one repository at a time. It starts from the active session's
 directory — so a session working in a repository opens on that repository — falls back to the path you
-last used when there is no session, and names the directory it checked when neither one is a repository
+last used when there is no session, shows which session directory it is following, and names the directory it checked when neither one is a repository
 (the host answers for its own working directory when it is asked for nothing, which is not necessarily
 where you are).
 
