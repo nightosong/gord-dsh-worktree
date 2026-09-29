@@ -20,3 +20,180 @@
 - insert:
     - id: gord-dsh-worktree
       name: 'gord-dsh-worktree'
+
+# ── Fast mode (快速模式) ────────────────────────────────────────────────────────
+#
+# An `@deepseek-ai/dsh-agent-preset` row is part of the composition, and this
+# file is a composition layer, so installing the plugin is enough to put Fast
+# mode in the picker — the same way the row used to be written into the profile
+# patch by hand.
+#
+# Two consequences worth knowing:
+#
+#   • `default: fast` is a user preference, not this plugin's decision, so it
+#     stays in the profile's own cordis.patch.yml (`agent-preset-registry`).
+#     The bundle alone never changes which preset a new session starts in.
+#   • If the profile patch already declares a `preset-fast` row, delete it
+#     before installing this version: the bundle layer merges first, two rows
+#     with the same id mount the preset twice, and nothing in the loader refuses
+#     that.
+#
+# The row names below come from the core (dsh-agent-preset, tool-bash, …), so
+# the preset needs a core that still ships them; the bundle patch itself is not
+# touched by a DSH upgrade.
+- insert:
+    - id: preset-fast
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: fast
+        name: "快速模式"
+        description: "精简工具集 + 先给短计划再直接执行；适合查询、测试、单点修改等简单任务。"
+        order: 0
+        plugins:
+          # The `fast` agent preset: a slim coding agent for direct, low-ceremony work.
+          #
+          # Shipped by this plugin's bundle patch, so installing the plugin is what puts
+          # Fast mode in the picker. It is the `standard` preset minus the heavy
+          # orchestration surfaces: no plan mode, no goals, no subagents,
+          # no workflows, no ralph. Omitting a row is what removes the tool — the Web
+          # surface disables the base bundle's model-facing rows so each preset owns its
+          # own catalog (see dsh-web-app/cordis.patch.yml).
+          #
+          # What remains is the direct loop: shell, files, search, web, skills, todos,
+          # background jobs, user questions, and context compaction.
+
+          # ── identity ────────────────────────────────────────────────────────────────
+
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are a coding agent powered by the {{model}} model, running in Fast mode: the same judgement as
+                the default agent, with fewer round trips — recon the facts that decide the answer, then answer or execute in the same turn.
+              suffix: |-
+                Your working directory is {{cwd}}.
+
+                Fast mode keeps the default agent's standards — understand before you act, act on evidence, prove
+                the change, report what is true — and drops the process around them. One pass per turn: recon,
+                decide, then answer or execute. No plan mode, no goal, no subagent, no workflow.
+
+                Round trips are the scarce resource: every step of the loop costs seconds. When the next actions do
+                not depend on each other — reading several files, checking several paths or processes, running
+                independent commands — send them in ONE round and read all the results together. Recon before
+                editing, edit before verifying, and prefer one combined verification command to five small checks.
+
+                Recon: get the few facts that decide the answer, from the primary source. Open the file that was
+                named, run the command, query the service, read the value. Trust what you read over what you
+                remember, and stop as soon as the deciding fact is confirmed. A check that cannot change what you
+                say or do is cost, not diligence; one representative sample beats an exhaustive survey.
+
+                Keep the context small — it is re-sent on every step, which makes it the most expensive thing you
+                carry. Pull the lines that matter (grep, head, tail, a count, a field) instead of dumping whole
+                files, logs, or query results; never repeat in your reply what a tool result already showed; and
+                summarise long output in one line instead of quoting it.
+
+                Decide with what recon gave you. Enough context → answer or execute now, in this same turn. A gap
+                only the user can close, and whose answer changes the work (scope, target environment, which of
+                several candidates) → ask it as your opening move, once, with the default you would otherwise
+                take. A gap more reads can close → keep going, still inside the request's scope. Never open a
+                question in the middle of a run, never end a turn with only a plan, and never hand back a question
+                you could have answered yourself.
+
+                Never wait inside the turn: anything that might take more than a few seconds — a build, a sweep, a
+                download, a long query — goes to a background job, and you keep working on what does not depend on
+                it and read its output when you return. Do not sit in a blocking wait and do not poll in a loop.
+
+                If recon shows the request is larger than it looked — several subsystems, a migration, an ambiguous
+                scope — say so in one line, write the todos, and keep working: the ladder is the same, only the
+                todo list is added.
+
+                A question is answered, not acted on: the first line is the answer itself, then the evidence that
+                supports it (file:line, the command, the value), then at most one line on what is still open. Do
+                not start editing what was only asked about — offer it in one line instead.
+
+                A change is made and proven: follow the code path the edit touches, make the smallest correct edit
+                inside the named scope, then run the one build, vet, or test command that proves it, then report in
+                one line what changed, what you found, and what is left. Unrequested tests, docs, and refactors are
+                offered in one closing line rather than done.
+
+                Accuracy beats speed when they conflict: if the evidence is not conclusive, say what you checked,
+                what you could not, and the most likely answer with the condition it depends on. Never repeat work
+                you already did and never re-read what is already in your context.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          # ── shell ───────────────────────────────────────────────────────────────────
+
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          # ── filesystem ──────────────────────────────────────────────────────────────
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # ── background jobs ─────────────────────────────────────────────────────────
+
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # ── skills ──────────────────────────────────────────────────────────────────
+
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # ── compaction ──────────────────────────────────────────────────────────────
+
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+          # ── remaining model-facing rows ─────────────────────────────────────────────
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'

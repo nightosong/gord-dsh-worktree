@@ -1,7 +1,8 @@
 # gord-dsh-worktree
 
 Git worktree management for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — isolate
-parallel work in its own directory and branch.
+parallel work in its own directory and branch. It also ships **Fast mode (快速模式)** as an agent preset
+and an opt-in patch that lets read-only tool calls run concurrently.
 
 [中文说明](README.zh.md)
 
@@ -17,6 +18,11 @@ parallel work in its own directory and branch.
 4. **Manage archived sessions** — *Settings → Worktrees* lists every session archived on this machine, with
    **Unarchive** per row, a delete icon, and **Delete all** for the set.
 5. **Double-click to rename** — rename a session from its sidebar row, without the menu.
+6. **Fast mode (快速模式)** — a slim agent preset that ships in the bundle patch, so the preset picker
+   has it as soon as the plugin is installed. See [Fast mode](#fast-mode-快速模式) below.
+7. **Concurrent read-only tool calls** — an opt-in patch for `bash`, `glob` and `grep`, so a step that
+   batches reads overlaps them instead of running them one after another. See
+   [Concurrent read-only tool calls](#concurrent-read-only-tool-calls) below.
 
 ![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
 
@@ -34,10 +40,39 @@ Then restart `dsh web` (a reload is enough once the bundle is on the layer stack
 **Settings → Worktrees**. Nothing else needs editing: the package declares `dsh.bundle.patch`, so the
 CLI adds it to the profile's bundle stack itself.
 
+Fast mode arrives with it — the same patch declares the `fast` agent preset, so the preset picker has
+**快速模式** without a profile file being edited. If the profile's own `cordis.patch.yml` already declares
+a `preset-fast` row (the hand-written way), delete that row: the bundle layer merges first, and two rows
+with the same id mount the preset twice, which the loader does not refuse. Which preset new sessions
+*start* in stays a user choice (`agent-preset-registry` in the profile patch); the bundle never sets it.
+The flip side of that split: this bundle is what declares Fast mode, so if you uninstall the plugin,
+change or remove that `default: fast` row as well — otherwise it names a preset that no longer exists.
+
+The concurrency patch is the one opt-in step, because it edits core tool packages rather than the
+composition:
+
+```sh
+cd /path/to/gord-dsh-worktree
+npm run patch:concurrency     # --check to inspect first, --revert to undo
+```
+
+It needs a `dsh web` restart, and it is idempotent — run it again after any DSH upgrade, which restores
+the files it edits.
+
 Supports dsh `>=0.1.5-rc.1 <0.2.0` — the whole 0.1.x line from `0.1.5-rc.1` on. Three of them are
 tested: `0.1.5-rc.1`, `0.1.6-alpha.2` and `0.1.7-rc.2`. Glyph export names, session navigation and the
 plugin settings interface all changed across that span, and the plugin handles each shape — see
 *Across DSH versions* below.
+
+Two features added in 0.3.0 need more than that floor does, so the minimum is per feature rather than per
+package:
+
+| Feature | Minimum dsh | Why |
+| ------- | ----------- | --- |
+| Worktree tools, *Settings → Worktrees*, the sidebar *Changes* tab, archived sessions | `0.1.5-rc.1` | The plugin's own code, with a fallback for every interface that changed across 0.1.5–0.1.7 |
+| Sidebar nested grouping and double-click rename | `0.1.5-rc.1` | Patched into the browser bundle; 0.1.7 ships both natively, and the script reports `native` there |
+| **Fast mode (快速模式)** | `0.1.7` | A preset is an `@deepseek-ai/dsh-agent-preset` composition row — 0.1.5/0.1.6 discovered presets from `$DSH_HOME/.agent-presets` instead, and 0.1.7 replaced that. On a build without the package the `preset-fast` insert has nothing to mount: delete that insert from `cordis.patch.yml`, or stay on 0.1.7+ |
+| **Concurrent read-only `bash`/`glob`/`grep`** | `0.1.7` | The patch matches the 0.1.7 core files exactly. On any other build `npm run check:concurrency` reports `unknown` and the tool refuses to write rather than guess |
 
 ## Across DSH versions
 
@@ -52,6 +87,12 @@ fallback and uses the new one where it exists, so one build runs on either line:
 
 Both `uiWorkspace` and `settings` are read optionally (`ctx.get`), so a profile composed without a
 workspace view, or without settings, loses one feature rather than failing to apply.
+
+A DSH upgrade also restores the two core tool packages the concurrency patch edits (`dsh-tool-bash` and
+`dsh-tool-fs-search`) — the preset that ships with the plugin is untouched by an upgrade, since it lives
+in this package. Re-run `npm run patch:concurrency` after one, and use `npm run check:concurrency` to see
+where it stands: `patched`, `original`, or `unknown` when the build moved on, which the tool refuses to
+force and reports instead.
 
 ## In detail
 
@@ -203,6 +244,59 @@ preview use, and both of its slots — the body and the tab title — are inject
 a profile composed without the right sidebar loses the tab instead of failing to apply the plugin.
 Open it from the right sidebar's start page, where it is listed beside *Workspace files*.
 
+### Fast mode (快速模式)
+
+An `@deepseek-ai/dsh-agent-preset` row is part of the composition, and a bundle's patch file is a
+composition layer, so this plugin *declares a preset*: `preset-fast`, id `fast`, `order: 0`. Install the
+plugin and the picker has it; there is no second copy to keep in sync.
+
+Fast mode keeps the default agent's standards — understand before you act, act on evidence, prove the
+change, report what is true — and drops the process around them. It is the `standard` preset minus the
+heavy orchestration surfaces (no plan mode, no goals, no subagents, no workflows), so it has 14 plugin
+rows instead of 31 tools: shell, files, search, web, skills, todos, background jobs, user questions, and
+context compaction.
+
+What its persona adds is measured, not stylistic. Session logs on real work showed 30–150 model round
+trips per turn at 6–12 s each, `bash` making up 81–94% of all tool calls, and roughly a third of the
+steps that call tools already batch two of them. So the preset's rules are: recon the facts that decide
+the answer and then answer or execute in the *same* turn; send independent actions in one round; never
+open a question mid-run (ask once, as the opening move); never wait inside the turn — a build, a sweep or
+a long query goes to a background job; keep the context small, because it is re-sent on every step; and
+skip the survey that cannot change the conclusion.
+
+### Concurrent read-only tool calls
+
+`dsh-agent-loop` runs a step's tool calls in parallel only when each call is classified concurrency-safe,
+and `dsh-tools` treats a tool with no `isConcurrencySafe` as exclusive. In the installed core that is
+`bash`, `glob` and `grep` — which is why a step that batches two `bash` calls still runs them one after
+another, and why a batched `read` waits behind a `bash` beside it.
+
+`npm run patch:concurrency` adds the missing classification in three places:
+
+| Target | What it adds |
+| ------ | ------------ |
+| `dsh-tool-bash` | `isConcurrencySafe: (args) => isReadOnlyCommand(args?.command)`, using `lib/read-only-command.js` — shipped by this plugin and copied into the package |
+| `dsh-tool-fs-search` | `isConcurrencySafe: () => true` for `glob` |
+| `dsh-tool-fs-search` | `isConcurrencySafe: () => true` for `grep` |
+
+The classifier is fail-closed. A command is parallel only when *every* `|`, `&&` and `;` segment starts
+with a command from a small read-only allowlist — `ls`, `cat`, `head`, `grep`, `rg`, `find` (without
+`-delete`/`-exec`), `sed` (without `-i`), `awk`, `jq`, `yq` (without `-i`), `sort` (without `-o`),
+`diff`, `stat`, `ps`, `pgrep`, `lsof`, `dig`, `curl` (without `-X`/`-d`/`-o`/…), the read-only
+subcommands of `git`/`docker`/`npm`/`kubectl`/`gh`, and so on — with no `>` anywhere and no command
+substitution. Everything else is exclusive, exactly as before: writers, `sed -i`, `npm install`, `git
+commit`, scripts (`node x.mjs`, `python3 scripts/…`), loops, `sleep`, `xargs`, and anything unrecognized.
+
+Three properties matter as much as the classification:
+
+- **Idempotent and recognizable.** Each row carries a marker; `--check` reports `patched`, `original`,
+  or `unknown` per row and exits 2 while anything is still pending.
+- **Fail-closed on a changed build.** Every anchor must match exactly once before any file is written, so
+  a DSH build that moved on leaves all of them untouched and exits 1 with `not in the expected shape`
+  rather than half-patching.
+- **Reversible.** `npm run unpatch:concurrency` restores each file from the `.orig` backup the patch
+  wrote beside it and removes the classifier it installed.
+
 ### The archive
 
 DSH archives a session by adding its id to one array on the workspace registry, and it offers no way
@@ -294,6 +388,10 @@ point at another one.
 - Deleting archived sessions is the only destructive operation that is not about git, and the only one
   that cannot be undone. It is behind an explicit confirmation, it removes only the ids it was handed,
   and it refuses to touch a session that is still running.
+- The concurrency patch decides only *scheduling*, never what runs: a call classified parallel is still
+  the same command with the same result. Its classifier is fail-closed, so the worst case is the old
+  behaviour — a read-only command that stays exclusive — and a command it does not recognize is never
+  made parallel.
 
 ## Settings
 
@@ -328,13 +426,24 @@ An install from GitHub or npm inside a profile needs none of this: there the pee
 profile's own `node_modules`, exactly as for every other plugin.
 
 Because the host half is mounted as a bundle layer, host-side changes need a `dsh web` restart; client
-changes reload with the GUI's normal module reload.
+changes reload with the GUI's normal module reload. The bundle patch is re-read on every session
+activation (`patchReload: live`), so a preset change there needs a new session rather than a restart.
 
-`npm test` runs three smoke suites — the host one against a throwaway git repository, the client one
-against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), and
-the patch tool against a copy of the **installed** DSH bundle (proving every behaviour is recognized,
-applying is repeatable and reversible, and the install itself is never written) — with no test framework
-to install.
+`npm test` runs five smoke suites — the host one against a throwaway git repository, the client one
+against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), the
+sidebar patch tool against a copy of the **installed** DSH bundle, the concurrency patch tool against
+synthetic packages plus a read-only check of the installed core (proving pending → patched → idempotent →
+reverted, that an unrecognizable build writes nothing, and that the classifier keeps writers exclusive),
+and the bundle patch's own shape (one mount row, one `preset-fast` with exactly the fourteen plugins, no
+personal data) — with no test framework to install.
+
+The three tools, none of which is needed to *use* the plugin:
+
+| Script | What it does |
+| ------ | ------------ |
+| `npm test` | The five suites above. |
+| `npm run patch:sidebar` / `unpatch:sidebar` | The sidebar's nested worktree grouping and double-click rename, patched into the installed browser bundle. |
+| `npm run patch:concurrency` / `unpatch:concurrency` / `check:concurrency` | Concurrent read-only `bash`/`glob`/`grep` calls, patched into the installed tool packages. |
 
 ## License
 

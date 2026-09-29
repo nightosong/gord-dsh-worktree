@@ -1,14 +1,17 @@
 {
   "name": "gord-dsh-worktree",
-  "version": "0.2.2",
-  "description": "Git worktree management for DeepSeek Harness: create isolated worktrees, start a session in one, review the uncommitted diff in the sidebar, manage archived sessions, and rename by double-click.",
+  "version": "0.3.0",
+  "description": "Git worktrees for DeepSeek Harness — isolate parallel work in its own directory and branch. Ships Fast mode (快速模式).",
   "keywords": [
     "dsh",
     "deepseek-harness",
     "plugin",
     "web",
     "git",
-    "worktree"
+    "worktree",
+    "preset",
+    "fast-mode",
+    "concurrency"
   ],
   "license": "MIT",
   "type": "module",
@@ -45,9 +48,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/host-smoke.mjs && node test/client-smoke.mjs && node test/patch-smoke.mjs",
+    "test": "node test/host-smoke.mjs && node test/client-smoke.mjs && node test/patch-smoke.mjs && node test/concurrency-smoke.mjs && node test/preset-smoke.mjs",
     "patch:sidebar": "node tools/patch-sidebar.mjs",
-    "unpatch:sidebar": "node tools/patch-sidebar.mjs --revert"
+    "unpatch:sidebar": "node tools/patch-sidebar.mjs --revert",
+    "patch:concurrency": "node tools/patch-concurrency.mjs",
+    "unpatch:concurrency": "node tools/patch-concurrency.mjs --revert",
+    "check:concurrency": "node tools/patch-concurrency.mjs --check"
   },
   "engines": {
     "dsh": ">=0.1.5-rc.1 <0.2.0"
@@ -59,6 +65,7 @@
   "homepage": "https://github.com/nightosong/gord-dsh-worktree",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent-preset": ">=0.1.5-rc.1 <0.2.0",
     "@deepseek-ai/dsh-home-paths": ">=0.1.5-rc.1 <0.2.0",
     "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.2.0",
     "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1 <0.2.0",
@@ -73,6 +80,9 @@
       "optional": true
     },
     "react": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-preset": {
       "optional": true
     }
   }

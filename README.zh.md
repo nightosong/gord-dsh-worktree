@@ -1,7 +1,8 @@
 # gord-dsh-worktree
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供 Git worktree 管理：把并行开发
-放进各自独立的目录与分支。
+放进各自独立的目录与分支。同时随包发布 **快速模式**（Fast mode，agent 预设），以及一个可选补丁——让只读
+工具调用并发执行。
 
 [English](README.md)
 
@@ -15,6 +16,9 @@
 4. **管理归档会话** —— *设置 → 工作树* 列出本机所有已归档的会话，每行可 **取消归档** 或单独删除，整体可
    **全部删除**。
 5. **双击重命名** —— 直接双击侧栏的会话行重命名，不用走菜单。
+6. **快速模式** —— 随 bundle patch 发布的精简 agent 预设，装上插件即可在预设选择器里看到。见下面「快速模式」。
+7. **只读工具调用并发** —— 可选补丁（`npm run patch:concurrency`），让 `bash`、`glob`、`grep` 在同一步里重叠
+   执行，而不是一个接一个。见下面「只读工具调用并发」。
 
 ![新会话行上的工作树选择器，展开态：当前工作树与新建工作树](docs/images/new-session-worktree-picker.png)
 
@@ -31,9 +35,33 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 然后重启 `dsh web`（bundle 进入层栈后重新加载即可），打开 **设置 → 工作树**。无需手工编辑任何 profile
 文件：包内声明了 `dsh.bundle.patch`，CLI 会自己把它加入 bundle 堆栈。
 
+快速模式随之而来——同一个 patch 声明了 `fast` 预设，所以不必编辑 profile 文件，预设选择器里就有**快速模式**。
+如果 profile 自己的 `cordis.patch.yml` 里已经有一行手写的 `preset-fast`，请先删掉它：bundle 层先合并，同 id
+两行会把预设挂载两次，而加载器并不会拒绝。新会话**默认**用哪个预设仍是用户自己的选择（profile patch 里的
+`agent-preset-registry`），bundle 不替你决定。这个分工的另一个方向也要注意：快速模式是由本插件的 patch 声明的，
+所以卸载插件时，请一并改掉或删掉 profile patch 里的 `default: fast` 那行，否则它指向一个已不存在的预设。
+
+并发补丁是唯一需要手动执行的一步，因为它改的是核心工具包而不是组合层：
+
+```sh
+cd /path/to/gord-dsh-worktree
+npm run patch:concurrency     # 先 --check 看状态，--revert 还原
+```
+
+它需要重启 `dsh web`，并且是幂等的——DSH 升级会还原它改的文件，升级后重跑一次即可。
+
 支持 dsh `>=0.1.5-rc.1 <0.2.0`，也就是从 `0.1.5-rc.1` 起的整条 0.1.x 线。已实测 `0.1.5-rc.1`、
 `0.1.6-alpha.2` 与 `0.1.7-rc.2` 三个版本：这三者之间图标导出名、会话跳转方式与插件设置接口都变过，
 插件都做了适配——见下面「跨版本兼容」。
+
+0.3.0 新增的两个能力要求比这个门槛高，所以最低版本按能力算、而不是按包算：
+
+| 能力 | 最低 dsh | 原因 |
+| ---- | -------- | ---- |
+| worktree 工具、*设置 → 工作树*、侧栏 *变更* 标签、归档会话 | `0.1.5-rc.1` | 插件自身代码，对 0.1.5–0.1.7 之间变过的每个接口都保留回退 |
+| 侧栏嵌套分组与双击重命名 | `0.1.5-rc.1` | 打进浏览器 bundle 的补丁；0.1.7 原生自带，脚本在那里会报 `native` |
+| **快速模式（Fast mode）** | `0.1.7` | 预设是 `@deepseek-ai/dsh-agent-preset` 组合行——0.1.5/0.1.6 从 `$DSH_HOME/.agent-presets` 目录发现预设，0.1.7 换掉了这套机制。在没有这个包的构建上，`preset-fast` 那行没有东西可挂：把它从 `cordis.patch.yml` 里删掉，或留在 0.1.7+ |
+| **只读 `bash`/`glob`/`grep` 并发** | `0.1.7` | 补丁按 0.1.7 的核心文件精确匹配锚点。其它构建上 `npm run check:concurrency` 报 `unknown`，工具会拒绝落盘而不是猜 |
 
 ## 跨版本兼容
 
@@ -47,6 +75,11 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 
 `uiWorkspace` 与 `settings` 都是可选读取（`ctx.get`），因此组合里没有工作区视图、或没有设置能力的
 profile 只会少一项功能，不会让插件加载失败。
+
+DSH 升级还会还原并发补丁改的两个核心工具包（`dsh-tool-bash`、`dsh-tool-fs-search`）——随包发布的
+预设不受升级影响，因为它就在这个包里。升级后重跑 `npm run patch:concurrency`，用
+`npm run check:concurrency` 看当前状态：`patched`、`original`，或构建已变化时的 `unknown`（工具会拒绝硬打，
+只报告）。
 
 ## 详细说明
 
@@ -65,6 +98,48 @@ profile 只会少一项功能，不会让插件加载失败。
 它通过内置文件树与文档预览所用的同一个 `sidebarRightTabs` 注册表注册，两个插槽（面板与标签标题）都
 在子 scope 里注入，因此没有组合右侧边栏的 profile 只是少一个标签页，而不会让整个插件 apply 失败。
 在右侧边栏的起始页里打开它，它和 *工作区文件* 并列。
+
+### 快速模式（Fast mode）
+
+`@deepseek-ai/dsh-agent-preset` 行属于组合层，而 bundle 的 patch 文件本身就是一层组合——所以这个插件
+**声明了一个预设**：`preset-fast`，id `fast`，`order: 0`。装上插件，预设选择器里就有它，没有第二份需要同步。
+
+快速模式保留默认 Agent 的标准——先理解再动手、按证据行动、证明改动、如实汇报——但去掉外面的流程：它是
+`standard` 预设减去重型编排面（无 plan mode、无 goal、无 subagent、无 workflow），所以是 14 个插件行而不是
+31 个工具：shell、文件、搜索、web、skill、todo、后台作业、用户提问、上下文压缩。
+
+它 persona 里的那些规则来自实测而非文风：真实会话日志显示每轮 30–150 次模型往返、每次 6–12 s，工具调用里
+`bash` 占 81–94%，而调用工具的那些步里约三分之一已经一次发两个。于是规则是：先侦察拿到能定结论的事实，
+然后**在同一轮内**回答或执行；互不依赖的动作放同一轮发；不中途提问（要问就在开场一次问清）；不在轮次里空等
+——构建、扫描、长查询走后台作业；上下文保持小，因为它每一步都要重发；不做改变不了结论的普查。
+
+### 只读工具调用并发
+
+`dsh-agent-loop` 只在一批调用都被判定为并发安全时才并行执行，而 `dsh-tools` 把没有 `isConcurrencySafe` 的
+工具视为独占。装好的核心里 `bash`、`glob`、`grep` 正是如此——所以一步里发两个 `bash` 仍然串行，紧挨着
+`bash` 的 `read` 也要等它。
+
+`npm run patch:concurrency` 在三处补上这个分类：
+
+| 目标 | 补什么 |
+| ---- | ------ |
+| `dsh-tool-bash` | `isConcurrencySafe: (args) => isReadOnlyCommand(args?.command)`，用 `lib/read-only-command.js`（本插件随包提供，复制进该包） |
+| `dsh-tool-fs-search` | `glob` 加 `isConcurrencySafe: () => true` |
+| `dsh-tool-fs-search` | `grep` 加 `isConcurrencySafe: () => true` |
+
+分类器是 fail-closed 的：只有当命令行**每一段**（按 `|`、`&&`、`;` 切分）的首命令都在一个很小的只读白名单里
+——`ls`、`cat`、`head`、`grep`、`rg`、`find`（不带 `-delete`/`-exec`）、`sed`（不带 `-i`）、`awk`、
+`jq`、`yq`（不带 `-i`）、`sort`（不带 `-o`）、`diff`、`stat`、`ps`、`pgrep`、`lsof`、`dig`、
+`curl`（不带 `-X`/`-d`/`-o` 等），以及 `git`/`docker`/`npm`/`kubectl`/`gh` 的只读子命令——且整行没有
+`>`、没有命令替换时，才判为可并行。其余一律独占，与打补丁前完全一致：写操作、`sed -i`、`npm install`、
+`git commit`、脚本（`node x.mjs`、`python3 scripts/…`）、循环、`sleep`、`xargs`，以及任何认不出来的命令。
+
+三条性质和分类结果同样重要：
+
+- **幂等且可识别**：每处插入都带 marker；`--check` 逐行报告 `patched`／`original`／`unknown`，还有未打的就退出 2。
+- **构建变了就停手**：落盘前要求每个锚点**恰好匹配一次**，所以 DSH 构建变了时一个文件都不写，退出 1 并报
+  `not in the expected shape`，而不是打一半。
+- **可还原**：`npm run unpatch:concurrency` 用补丁写在旁边的 `.orig` 备份还原每个文件，并删掉它装进去的分类器。
 
 ### 归档
 
@@ -179,6 +254,9 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 - 删除归档会话是唯一与 git 无关、也是唯一不可撤销的破坏性操作。它藏在一次明确确认之后，只删掉被明确
   交来的那些 id，并且拒绝碰仍在运行的会话。
 
+- 并发补丁只决定**调度**，不决定跑什么：被判为并行的调用仍是同一条命令、同一个结果。分类器是 fail-closed
+  的，所以最坏情况就是打补丁前的行为——一条只读命令仍然独占；它认不出来的命令永远不会被并行。
+
 ## 配置
 
 | 字段 | 默认值 | 含义 |
@@ -209,11 +287,21 @@ done
 从 GitHub 或 npm 装进 profile 则不需要这一步：那时 peer 依赖经由 profile 自己的 `node_modules`
 解析，和其它插件完全一致。
 
-Host 半区作为 bundle 层挂载，改动需要重启 `dsh web`；客户端改动随 GUI 的模块重载生效。
+Host 半区作为 bundle 层挂载，改动需要重启 `dsh web`；客户端改动随 GUI 的模块重载生效。bundle patch 在每次
+会话激活时重新读取（`patchReload: live`），所以改预设只需新开一个会话，不必重启。
 
-`npm test` 会跑三个冒烟测试：Host 侧针对一个临时 git 仓库，客户端侧针对一个极简 React 运行时
-（含 0.1.5/0.1.6/0.1.7 三套图标命名与两条会话跳转路径），侧栏补丁侧针对**当前装着的** DSH bundle
-副本（确认每个行为都被认识、可重复打、可还原，且不写坏安装），无需安装任何测试框架。
+`npm test` 会跑五个冒烟套件：Host 侧针对一个临时 git 仓库，客户端侧针对一个极简 React 运行时（含三套图标命名
+与两条会话跳转路径），侧栏补丁针对**当前装着的** DSH bundle 副本，并发补丁针对合成包并对已安装核心做只读检查
+（覆盖待打 → 已打 → 幂等 → 还原、构建不可识别时不落盘、以及分类器把写操作留在独占），bundle patch 自身的形状
+检查（一条挂载行、一个恰好 14 个插件的 `preset-fast`、不含个人信息），无需安装任何测试框架。
+
+三个工具，都不影响插件的正常使用：
+
+| 脚本 | 作用 |
+| ---- | ---- |
+| `npm test` | 上面五个套件。 |
+| `npm run patch:sidebar` / `unpatch:sidebar` | 把侧栏的 worktree 嵌套分组与双击重命名打进已安装的浏览器 bundle。 |
+| `npm run patch:concurrency` / `unpatch:concurrency` / `check:concurrency` | 把只读 `bash`/`glob`/`grep` 的并发判定打进已安装的工具包。 |
 
 ## 许可证
 
