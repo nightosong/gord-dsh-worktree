@@ -10,13 +10,14 @@
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import * as archive from '../lib/archive.js'
 import * as service from '../lib/service.js'
-import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode } from '../lib/worktree.js'
+import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode, worktreeList } from '../lib/worktree.js'
 
 let failures = 0
 let checks = 0
@@ -35,6 +36,19 @@ function check(label, condition, detail) {
 /** Run git in the scratch repository, inheriting its identity config. */
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+}
+
+/**
+ * The worktree fields the model-facing output schema declares, read out of the
+ * tool definition. The harness rejects a whole tool call over a single
+ * undeclared key, so this list and `worktreeView`'s projection must agree.
+ */
+function declaredWorktreeFields() {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'index.js'), 'utf8')
+  const start = source.indexOf('worktrees: {')
+  if (start === -1) return []
+  const block = source.slice(start, source.indexOf('Branches: $', start))
+  return [...block.matchAll(/^ {18}(\w+): \{ type/gm)].map((match) => match[1]).sort()
 }
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'gord-dsh-worktree-test-')))
@@ -85,6 +99,16 @@ try {
   check('describe finds the main root', described.mainRoot === repo, described.mainRoot)
   check('describe reports the current branch', described.branch === 'main', described.branch)
   check('describe reports a clean tree', described.dirty === false)
+  // Regression: `worktreeView` projects eight fields and the tool projects its
+  // records through it, so all eight must be declared. `bare` was missing once,
+  // which failed the whole worktree_list call instead of returning the list.
+  const projected = Object.keys(service.worktreeView((await worktreeList(repo))[0])).sort()
+  const declared = declaredWorktreeFields()
+  check(
+    'the worktree output schema declares every projected field',
+    declared.join(' ') === projected.join(' '),
+    `schema: ${declared.join(' ')} — projection: ${projected.join(' ')}`,
+  )
   const notRepo = await service.describeRepository(tmpdir())
   check('describe rejects a non-repository', notRepo.ok === false && notRepo.error === service.NOT_A_REPO, JSON.stringify(notRepo))
 
