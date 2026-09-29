@@ -523,9 +523,7 @@ globalThis.fetch = (url, options) => {
             ? body.dir === NON_REPO_DIR
               ? { ok: false, error: 'not-a-repository', dir: body.dir }
               : listing
-            : action === 'settings'
-              ? { ok: true, settings: { defaultParent: body.defaultParent }, defaultParent: body.defaultParent }
-              : action === 'create'
+            : action === 'create'
               ? {
                   ok: true,
                   path: '/tmp/demo/app-worktrees/new',
@@ -593,7 +591,13 @@ const toggle = findButton(tree, '+ 创建') ?? findButton(tree, '新建工作树
 check('create section exposes a toggle', toggle !== undefined)
 toggle?.props.onClick()
 const opened = await settle(props)
-check('form opens', findInput(opened, '例如 /Users/me/code/my-app') !== undefined && findButton(opened, '创建') !== undefined, textsOf(opened).join(' | ').slice(0, 200))
+// The form is recognised by its own fields, not by the repository field: the
+// panel has no path field any more, so that used to pass for the wrong reason.
+check(
+  'form opens',
+  textsOf(opened).join(' | ').includes('分支名') && findButton(opened, '创建') !== undefined,
+  textsOf(opened).join(' | ').slice(-200),
+)
 
 process.stdout.write('\ninteraction: open as workspace\n')
 const openButton = findButton(opened, '用工作区打开')
@@ -615,55 +619,37 @@ const submit = confirming.children.flatMap((child) => findButton(child, '删除'
 check('confirmation offers a submit', submit !== undefined || confirmRemove !== undefined)
 
 process.stdout.write('\nsettings: repository follows the session\n')
-// The page used to know only what local storage remembered, so a session
-// working in a repository could still be told that "the directory" — in fact
-// the host's own cwd — is not one. The session knows where it is: the page
-// falls back to it once, and when there is nothing to fall back to the message
-// has to name the directory it actually asked about.
-globalThis.window.localStorage.setItem('gord-dsh-worktree:dir', NON_REPO_DIR)
+// The page has no path field any more: it manages the repository the active
+// session is working in. A remembered path used to be able to override that, so
+// a session demonstrably working in a repository could still be told that "the
+// directory" — in fact the host's own cwd — is not one.
 slots = []
 calls.length = 0
-const recovered = await settle(props)
-const recoveredText = textsOf(recovered).join(' | ')
+const followed = await settle(props)
+const followedText = textsOf(followed).join(' | ')
 check(
-  'the panel falls back to the session directory',
+  'the panel asks about the session directory',
   calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
   JSON.stringify(calls.map((call) => call.body.dir)),
 )
-check('the recovered repository is rendered', recoveredText.includes('/tmp/demo/app') && recoveredText.includes('main'), recoveredText.slice(0, 200))
-
-process.stdout.write('\nsettings: default worktree parent\n')
-// The value the page shows is the one the host will use, and saving it goes
-// over the route: 0.1.7 has no plugin settings namespace for the page to write.
-const parentField = findByClass(recovered, 'gord-dsh-worktree-parent')
-check('the panel shows where new worktrees go', parentField?.props.value === '/tmp/demo/app-worktrees', JSON.stringify(parentField?.props.value))
-parentField?.props.onChange({ target: { value: '~/Worktrees' } })
-const editedParent = await settle(props)
-calls.length = 0
-findButton(editedParent, '保存')?.props.onClick()
-const savedParent = await settle(props)
-check(
-  'saving posts the typed parent to the host',
-  calls.some((call) => call.action === 'settings' && call.body.defaultParent === '~/Worktrees'),
-  JSON.stringify(calls.map((call) => [call.action, call.body.defaultParent ?? call.body.dir])),
-)
-check('the panel reports the save', textsOf(savedParent).join(' ').includes('已保存'), textsOf(savedParent).join(' ').slice(-160))
+check('the session repository is rendered', followedText.includes('/tmp/demo/app') && followedText.includes('main'), followedText.slice(0, 200))
+// Shown, not edited: the value belongs to the plugin's own configuration.
+check('the panel shows where new worktrees go', followedText.includes('新工作树默认位置: /tmp/demo/app-worktrees'), followedText.slice(0, 300))
+check('the panel offers no repository path field', findByClass(followed, 'gord-dsh-worktree-input') === undefined)
 
 sessionList.byId.s1.cwd = NON_REPO_DIR
 slots = []
 calls.length = 0
 const refused = await settle(props)
 const refusedText = textsOf(refused).join(' | ')
-check('a session outside any repository is refused', !calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'), JSON.stringify(calls.map((call) => call.body.dir)))
-check('the refusal names the directory it checked', refusedText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`), refusedText.slice(0, 300))
+check('a session outside any repository is refused', refusedText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`), refusedText.slice(0, 300))
 // The page must also say which session directory it is following: a refusal is
 // otherwise indistinguishable from "the repository you typed is wrong".
 check('the page names the session directory it follows', refusedText.includes(`当前会话目录：${NON_REPO_DIR}`), refusedText.slice(0, 300))
 sessionList.byId.s1.cwd = '/tmp/demo/app'
-// Leave the page where the rest of the suite expects it: the probes above
-// deliberately parked it on a directory that is not a repository, and the
-// archived-sessions card is rendered inside this very page.
-globalThis.window.localStorage.setItem('gord-dsh-worktree:dir', '/tmp/demo/app')
+// Leave the page where the rest of the suite expects it: the probe above parked
+// it on a directory that is not a repository, and the archived-sessions card is
+// rendered inside this very page.
 slots = []
 await settle(props)
 

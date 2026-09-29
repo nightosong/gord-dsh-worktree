@@ -402,13 +402,14 @@ point at another one.
 
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
-| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Editable from *Settings → Worktrees*; the profile entry's `defaultParent` is the value it starts from. |
+| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Set it in this profile entry; the panel displays it but does not edit it. |
 
-The *Settings → Worktrees* page asks one repository at a time. It starts from the active session's
-directory — so a session working in a repository opens on that repository — falls back to the path you
-last used when there is no session, shows which session directory it is following, and names the directory it checked when neither one is a repository
-(the host answers for its own working directory when it is asked for nothing, which is not necessarily
-where you are).
+The *Settings → Worktrees* page manages exactly one repository: the one the active session is working
+in, so a session working in a repository opens on that repository. There is no path field — the only
+repository the page can be sure you mean is the one you are already in — and it says which session
+directory it is following. A session with no working location (a brand-new one) is reported as such:
+choose a working location first, and a directory that is not a repository is named in the message
+rather than silently replaced by the host's own working directory.
 
 ## Development
 
