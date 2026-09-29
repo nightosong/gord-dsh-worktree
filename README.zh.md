@@ -267,6 +267,10 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 | ---- | ------ | ---- |
 | `defaultParent` | *空* | 新建 worktree 的父目录。留空用 `$DSH_HOME/worktree/`。 |
 
+*设置 → 工作树* 页一次管理一个仓库：默认取当前会话所在目录（开在仓库里的会话就对着那个仓库），没有会话
+时用你上次用过的路径；两者都不是仓库时，错误信息会写明它到底检查的是哪个目录（留空时服务端会按自己的
+工作目录回答，那不一定是你所在的地方）。
+
 ## 开发
 
 插件是纯 ESM，没有构建步骤：`lib/index.js` 是 Host 半区，`lib/client.js` 是浏览器端 bundle（经

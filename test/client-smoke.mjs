@@ -468,6 +468,8 @@ check('section label resolves through the locale service', navLabel === '工作�
 
 process.stdout.write('\nrender: initial load\n')
 
+/** A directory the fake host refuses: nothing here is inside a repository. */
+const NON_REPO_DIR = '/tmp/demo/not-a-repository'
 /** Listing payload the fake host answers with. */
 const listing = {
   ok: true,
@@ -505,7 +507,9 @@ globalThis.fetch = (url, options) => {
         : action === 'unarchive' || action === 'deleteArchived'
           ? archiveMutation
           : action === 'list'
-            ? listing
+            ? body.dir === NON_REPO_DIR
+              ? { ok: false, error: 'not-a-repository', dir: body.dir }
+              : listing
             : action === 'create'
               ? {
                   ok: true,
@@ -594,6 +598,39 @@ check('remove is not called before confirmation', !calls.some((call) => call.act
 const confirmRemove = findButton(confirming, '取消') !== undefined ? findButton(confirming, '删除') : undefined
 const submit = confirming.children.flatMap((child) => findButton(child, '删除') ?? []).filter((node) => node !== removeButton)[0]
 check('confirmation offers a submit', submit !== undefined || confirmRemove !== undefined)
+
+process.stdout.write('\nsettings: repository follows the session\n')
+// The page used to know only what local storage remembered, so a session
+// working in a repository could still be told that "the directory" — in fact
+// the host's own cwd — is not one. The session knows where it is: the page
+// falls back to it once, and when there is nothing to fall back to the message
+// has to name the directory it actually asked about.
+globalThis.window.localStorage.setItem('gord-dsh-worktree:dir', NON_REPO_DIR)
+slots = []
+calls.length = 0
+const recovered = await settle(props)
+const recoveredText = textsOf(recovered).join(' | ')
+check(
+  'the panel falls back to the session directory',
+  calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
+  JSON.stringify(calls.map((call) => call.body.dir)),
+)
+check('the recovered repository is rendered', recoveredText.includes('/tmp/demo/app') && recoveredText.includes('main'), recoveredText.slice(0, 200))
+
+sessionList.byId.s1.cwd = NON_REPO_DIR
+slots = []
+calls.length = 0
+const refused = await settle(props)
+const refusedText = textsOf(refused).join(' | ')
+check('a session outside any repository is refused', !calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'), JSON.stringify(calls.map((call) => call.body.dir)))
+check('the refusal names the directory it checked', refusedText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`), refusedText.slice(0, 300))
+sessionList.byId.s1.cwd = '/tmp/demo/app'
+// Leave the page where the rest of the suite expects it: the probes above
+// deliberately parked it on a directory that is not a repository, and the
+// archived-sessions card is rendered inside this very page.
+globalThis.window.localStorage.setItem('gord-dsh-worktree:dir', '/tmp/demo/app')
+slots = []
+await settle(props)
 
 process.stdout.write('\ncomposer chip\n')
 // The chip is a second root component, mounted fresh, so the shared hook store
