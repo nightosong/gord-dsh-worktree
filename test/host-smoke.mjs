@@ -318,7 +318,7 @@ try {
       // workspaces, of which only the repositories count.
       list: () => [
         { id: 'w-repo', title: 'the project', path: repo, updatedAt: '2026-09-29T10:00:00.000Z' },
-        { id: 'w-container', title: 'a container', path: scratch, updatedAt: '2026-09-29T11:00:00.000Z' },
+        { id: 'w-container', title: 'a container', path: scratch, updatedAt: '2026-09-29T11:00:00.000Z', sessionIds: ['session-in-container'] },
       ],
     },
     inject(names, callback) {
@@ -377,6 +377,29 @@ try {
   const repos = await callApi('repos', {})
   check('the panel offers the repository workspaces as projects', repos.ok === true && repos.repos.length === 1 && repos.repos[0].path === repo, JSON.stringify(repos))
   check('a project carries the branch it would cut from', repos.repos?.[0]?.branch === 'main' && repos.repos[0].root === repo, JSON.stringify(repos.repos?.[0]))
+  // The fixture is exactly the reported shape: a workspace that is not a
+  // repository but holds one (`apifree/backend/rest-atlas`), so the project has
+  // to be found *inside* the workspace rather than at its root.
+  check(
+    'a container workspace contributes the repository inside it',
+    repos.repos[0].inside !== undefined && repos.repos[0].workspace === scratch,
+    JSON.stringify(repos.repos[0]),
+  )
+  check('no project is listed twice', new Set(repos.repos.map((row) => row.root)).size === repos.repos.length, JSON.stringify(repos.repos.map((row) => row.root)))
+  // Which workspace the caller is in is the question being answered, so it is
+  // asked by session id when the caller has one, and by directory otherwise.
+  const askedBySession = await callApi('repos', { sessionId: 'session-in-container' })
+  check(
+    'a session id selects its own workspace',
+    askedBySession.repos[0]?.root === repo && askedBySession.repos[0]?.workspaces.includes(scratch),
+    JSON.stringify(askedBySession.repos.map((row) => [row.root, row.workspaces])),
+  )
+  const askedByDir = await callApi('repos', { dir: join(scratch, 'app') })
+  check(
+    'a directory selects the workspace containing it',
+    askedByDir.repos[0]?.root === repo,
+    JSON.stringify(askedByDir.repos.map((row) => row.root)),
+  )
 
   // A branch that exists only on a remote is the case that used to be silently
   // wrong: naming it created a fresh branch of the same name off the local base,
