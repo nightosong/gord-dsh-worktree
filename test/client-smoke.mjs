@@ -505,6 +505,14 @@ let diffPayload = { ok: true, root: '/tmp/demo/app', branch: 'main', changed: 0,
 let archivePayload = { ok: true, total: 0, truncated: false, records: [] }
 /** Result the fake host answers the two archive mutations with; probes swap it. */
 let archiveMutation = { ok: true, unarchived: 1, deleted: [], skipped: [] }
+/**
+ * The projects the panel and the chip choose from — the user's workspaces that
+ * are repositories. The first is the session's own project; the second exists so
+ * that "another project" has something to offer.
+ */
+const REPO_ROW = { id: 'w1', title: 'demo', path: '/tmp/demo/app', root: '/tmp/demo/app', branch: 'main', dirty: false }
+const OTHER_REPO_ROW = { id: 'w2', title: 'other', path: '/tmp/demo/other', root: '/tmp/demo/other', branch: 'main', dirty: false }
+
 const calls = []
 globalThis.fetch = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
@@ -519,10 +527,12 @@ globalThis.fetch = (url, options) => {
         ? archivePayload
         : action === 'unarchive' || action === 'deleteArchived'
           ? archiveMutation
-          : action === 'list'
-            ? body.dir === NON_REPO_DIR
-              ? { ok: false, error: 'not-a-repository', dir: body.dir }
-              : listing
+          : action === 'repos'
+            ? { ok: true, repos: [REPO_ROW, OTHER_REPO_ROW] }
+            : action === 'list'
+              ? body.dir === NON_REPO_DIR
+                ? { ok: false, error: 'not-a-repository', dir: body.dir }
+                : listing
             : action === 'create'
               ? {
                   ok: true,
@@ -577,7 +587,10 @@ const props = { t: (key, params) => {
 
 const tree = await settle(props)
 const allText = textsOf(tree).join(' | ')
-check('panel fetched the listing', calls.some((call) => call.action === 'list'), JSON.stringify(calls.map((c) => c.action)))
+check('panel asks for the projects', calls.some((call) => call.action === 'repos'), JSON.stringify(calls.map((c) => c.action)))
+// The listing follows the selected project, which comes from the workspace
+// list — not from the session's directory, which is often not a repository.
+check('panel fetched the listing of the selected project', calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path), JSON.stringify(calls.map((c) => [c.action, c.body.dir])))
 check('panel renders the repository root', allText.includes('/tmp/demo/app'), allText.slice(0, 200))
 check('panel renders the repository branch', allText.includes('main'))
 check('panel flags a dirty repository', allText.includes('有未提交改动'))
@@ -618,34 +631,41 @@ const confirmRemove = findButton(confirming, '取消') !== undefined ? findButto
 const submit = confirming.children.flatMap((child) => findButton(child, '删除') ?? []).filter((node) => node !== removeButton)[0]
 check('confirmation offers a submit', submit !== undefined || confirmRemove !== undefined)
 
-process.stdout.write('\nsettings: repository follows the session\n')
-// The page has no path field any more: it manages the repository the active
-// session is working in. A remembered path used to be able to override that, so
-// a session demonstrably working in a repository could still be told that "the
-// directory" — in fact the host's own cwd — is not one.
+process.stdout.write('\nsettings: project comes from the workspace list\n')
+// There is no path field and no session diagnostic any more: the page manages
+// one of the user's projects, and every project it can offer is a repository.
+// The session's own project is preferred when it has one.
 slots = []
 calls.length = 0
 const followed = await settle(props)
 const followedText = textsOf(followed).join(' | ')
 check(
-  'the panel asks about the session directory',
-  calls.some((call) => call.action === 'list' && call.body.dir === '/tmp/demo/app'),
-  JSON.stringify(calls.map((call) => call.body.dir)),
+  'the panel asks about the session project',
+  calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path),
+  JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
-check('the session repository is rendered', followedText.includes('/tmp/demo/app') && followedText.includes('main'), followedText.slice(0, 200))
+check('the session project is rendered', followedText.includes('/tmp/demo/app') && followedText.includes('main'), followedText.slice(0, 200))
 // Shown, not edited: the value belongs to the plugin's own configuration.
 check('the panel shows where new worktrees go', followedText.includes('新工作树默认位置: /tmp/demo/app-worktrees'), followedText.slice(0, 300))
 check('the panel offers no repository path field', findByClass(followed, 'gord-dsh-worktree-input') === undefined)
+// No picker: the project is resolved for the page and merely named, so there is
+// nothing to choose before the worktree can be made.
+check('the project is named, not chosen', followedText.includes('demo') && findByClass(followed, 'gord-dsh-worktree-project') === undefined)
 
 sessionList.byId.s1.cwd = NON_REPO_DIR
 slots = []
 calls.length = 0
-const refused = await settle(props)
-const refusedText = textsOf(refused).join(' | ')
-check('a session outside any repository is refused', refusedText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`), refusedText.slice(0, 300))
-// The page must also say which session directory it is following: a refusal is
-// otherwise indistinguishable from "the repository you typed is wrong".
-check('the page names the session directory it follows', refusedText.includes(`当前会话目录：${NON_REPO_DIR}`), refusedText.slice(0, 300))
+const outsideRepo = await settle(props)
+const outsideText = textsOf(outsideRepo).join(' | ')
+// The whole point: a session parked outside every repository used to make this
+// page refuse to do anything at all.
+check(
+  'a session outside any repository still gets a listing',
+  calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path),
+  JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
+)
+check('the listing renders for it', outsideText.includes('worktree/feat'), outsideText.slice(0, 300))
+check('no session-directory refusal is shown', !outsideText.includes('不是 git 仓库') && !outsideText.includes('当前会话目录'), outsideText.slice(0, 300))
 sessionList.byId.s1.cwd = '/tmp/demo/app'
 // Leave the page where the rest of the suite expects it: the probe above parked
 // it on a directory that is not a repository, and the archived-sessions card is
@@ -1434,26 +1454,33 @@ for (const scheme of schemes) {
 check('no direct primitives element type is left', !/createElement\(\s*primitives\./.test(clientSource))
 
 process.stdout.write('\ncomposer chip: session outside a repository\n')
-// The chip cuts its worktree from the repository the session sits in. A session
-// parked in a container directory has none to cut from, and the menu has to say
-// so — and say what to do — instead of leaving a refusal that reads as a broken
-// button. Fresh root: the chip keeps its own hook store.
+// A session parked in a container directory has no repository of its own, so the
+// menu offers the user's projects instead: that is how a worktree gets made
+// without a path to type and without a refusal to read. Fresh root: the chip
+// keeps its own hook store.
 slots = []
 cleanups = {}
 const outsideSession = { id: 's1', cwd: NON_REPO_DIR, blank: true }
 const outsideClosed = await renderChip(40, outsideSession)
 findByClass(outsideClosed, 'gord-dsh-worktree-seat')?.props.onClick()
+calls.length = 0
 const outsideOpen = await renderChip(40, outsideSession)
-const outsideText = textsOf(outsideOpen).join(' ')
+const outsideChipText = textsOf(outsideOpen).join(' ')
+check('the chip shows no refusal for a session outside a repository', !outsideChipText.includes('不是 git 仓库') && !outsideChipText.includes('没有工作位置'), outsideChipText.slice(0, 300))
+check('the chip names the project it will use', outsideChipText.includes('demo'), outsideChipText.slice(0, 300))
+check('the chip asks the host for it', calls.some((call) => call.action === 'repos'), JSON.stringify(calls.map((c) => c.action)))
+// Clicking is the whole fix: it creates a worktree of that project, based on
+// that project's current branch, outside the project's own directory.
+const projectRows = findAllByClass(outsideOpen, 'gord-dsh-worktree-option')
+const otherRow = projectRows.find((row) => textsOf(row).join(' ').includes('demo'))
+check('the create row is clickable', otherRow !== undefined, JSON.stringify(projectRows.map((row) => textsOf(row).join(' '))))
+calls.length = 0
+otherRow?.props.onClick()
+await renderChip(40, outsideSession)
 check(
-  'the chip names the directory it could not use',
-  outsideText.includes(`该目录不在 git 仓库中：${NON_REPO_DIR}`),
-  outsideText.slice(0, 300),
-)
-check(
-  'the chip says what to do instead',
-  outsideText.includes(`当前会话的工作位置 ${NON_REPO_DIR} 不是 git 仓库`),
-  outsideText.slice(0, 300),
+  'clicking it creates a worktree of that project',
+  calls.some((call) => call.action === 'create' && call.body.dir === REPO_ROW.path),
+  JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
 
 process.stdout.write('\nlocalization\n')

@@ -120,8 +120,16 @@ try {
   check('create checked out the branch', created.branch === 'worktree/feature-a', created.branch)
   check('main worktree is untouched', git(repo, 'rev-parse', '--abbrev-ref', 'HEAD') === 'main')
 
-  const relative = await service.createWorktree({ dir: repo, branch: 'worktree/feature-b', base: 'main', path: 'app-worktrees/custom-dir' })
-  check('create accepts a repo-relative path', relative.ok === true && relative.path === join(repo, 'app-worktrees/custom-dir'), JSON.stringify(relative.path))
+  // A named path is honoured, but never inside the project the worktree belongs
+  // to: such a checkout shows up in that project's own `git status` and diffs —
+  // which is exactly what putting them under `$DSH_HOME/worktree` avoids. A
+  // relative path resolves against the repository, so it is always refused.
+  const insideRepo = await service.createWorktree({ dir: repo, branch: 'worktree/feature-b', base: 'main', path: 'app-worktrees/custom-dir' })
+  check('create refuses a path inside the repository', insideRepo.ok === false && insideRepo.error === 'inside-repository', JSON.stringify(insideRepo))
+
+  const customPath = join(scratch, 'worktree', 'custom-dir')
+  const relative = await service.createWorktree({ dir: repo, branch: 'worktree/feature-b', base: 'main', path: customPath })
+  check('create accepts a path outside the repository', relative.ok === true && relative.path === customPath, JSON.stringify(relative.path))
 
   const rejectedBase = await service.createWorktree({ dir: repo, branch: 'worktree/nope', base: 'no-such-rev' })
   check('create refuses an unknown base', rejectedBase.ok === false && rejectedBase.error === 'unknown-base', JSON.stringify(rejectedBase))
@@ -132,7 +140,7 @@ try {
   const reused = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main' })
   check('create refuses an occupied target directory', reused.ok === false && reused.error === 'path-in-use', JSON.stringify(reused))
 
-  const doubleCheckout = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main', path: 'app-worktrees/other' })
+  const doubleCheckout = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main', path: join(scratch, 'worktree', 'other') })
   check('create refuses a branch checked out elsewhere', doubleCheckout.ok === false && doubleCheckout.error === 'git-failed', JSON.stringify(doubleCheckout))
 
   const described2 = await service.listWorktrees(repo)
@@ -306,6 +314,12 @@ try {
         adoptedTitles.push(title)
         return { id: 'w-adopted', title: 'adopted' }
       },
+      // The projects the panel and the composer control pick from: the user's
+      // workspaces, of which only the repositories count.
+      list: () => [
+        { id: 'w-repo', title: 'the project', path: repo, updatedAt: '2026-09-29T10:00:00.000Z' },
+        { id: 'w-container', title: 'a container', path: scratch, updatedAt: '2026-09-29T11:00:00.000Z' },
+      ],
     },
     inject(names, callback) {
       // The settings and workspace injections only run where those services
@@ -355,6 +369,14 @@ try {
   // where it is, so adopting there would add a sidebar entry nobody asked for.
   check('the tool path adopts nothing', adopted.length === 1, JSON.stringify(adopted))
   check('panel create reports the path it made', routed.path === join(scratch, 'worktree', 'worktree-route-check'), routed.path)
+
+  // The projects a worktree can be cut from: the user's workspaces that are
+  // repositories, most recently used first — not the ones that merely contain
+  // repositories, and not anything that is not a repository at all. This is what
+  // lets a session parked anywhere still make a worktree of its project.
+  const repos = await callApi('repos', {})
+  check('the panel offers the repository workspaces as projects', repos.ok === true && repos.repos.length === 1 && repos.repos[0].path === repo, JSON.stringify(repos))
+  check('a project carries the branch it would cut from', repos.repos?.[0]?.branch === 'main' && repos.repos[0].root === repo, JSON.stringify(repos.repos?.[0]))
 
   // A branch that exists only on a remote is the case that used to be silently
   // wrong: naming it created a fresh branch of the same name off the local base,

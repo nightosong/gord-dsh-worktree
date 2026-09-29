@@ -119,6 +119,15 @@ it and you are in the new worktree: the worktree is made, registered, and a sess
 opened inside it, ready for your first message. Once there, the branch is yours — create or switch
 branches with ordinary git when the task calls for it; changing branch does not need a new worktree.
 
+**Which project, and where the checkout goes.** A worktree belongs to a project, and the project is
+resolved rather than chosen: the repository the session is working in, or — when the session sits in a
+directory that is not a repository, which is common — the most recently used of your workspace
+repositories. The control names the project it will use, so nothing is decided invisibly, and the new
+worktree is cut from that project's current branch. The checkout itself always lands in
+`$DSH_HOME/worktree/`, outside every project: a worktree inside its own repository shows up in that
+project's `git status` and diffs, which is what that location exists to avoid. A requested path inside
+the project is refused rather than quietly relocated.
+
 **It has to happen on the click, not on the first message.** A session's directory is fixed when the
 session is created, and the blank session in the composer is created before anything is typed, so there
 is no later moment at which a message could be aimed at a directory that does not exist yet. Creating
@@ -404,12 +413,11 @@ point at another one.
 | ----- | ------- | ------- |
 | `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Set it in this profile entry; the panel displays it but does not edit it. |
 
-The *Settings → Worktrees* page manages exactly one repository: the one the active session is working
-in, so a session working in a repository opens on that repository. There is no path field — the only
-repository the page can be sure you mean is the one you are already in — and it says which session
-directory it is following. A session with no working location (a brand-new one) is reported as such:
-choose a working location first, and a directory that is not a repository is named in the message
-rather than silently replaced by the host's own working directory.
+The *Settings → Worktrees* page manages exactly one project, and resolves which one for you: the
+repository the active session is working in, or — when that is not a repository — the most recently
+used of your workspace repositories. It names the project it resolved, and there is nothing to type or
+pick: no path field, no repository diagnostics. Worktrees are created outside every project, so a
+checkout never appears in its own project's diffs.
 
 ## Development
 
