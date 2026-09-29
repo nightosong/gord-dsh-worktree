@@ -452,6 +452,12 @@ root.plugin({
     // service is exactly the case the plugin's child-scope registration
     // exists for, so the stub must be a real provider rather than an
     // always-answering lookup.
+    // The user's workspaces, which is where a project comes from when the
+    // session's own directory is not a repository. The plugin reads it through
+    // a declared injection, so the stub has to expose the service's own shape.
+    serviceCtx.provide('workspaces', {
+      getSnapshot: () => ({ items: [{ workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo' }, { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other' }] }),
+    })
     serviceCtx.provide('sidebarRightTabs', {
       register(definition) {
         tabTypes.push(definition)
@@ -510,6 +516,8 @@ let archiveMutation = { ok: true, unarchived: 1, deleted: [], skipped: [] }
  * are repositories. The first is the session's own project; the second exists so
  * that "another project" has something to offer.
  */
+// Flipped by one probe below, which needs a host that does not answer `repos`.
+let reposUnavailable = false
 const REPO_ROW = { id: 'w1', title: 'demo', path: '/tmp/demo/app', root: '/tmp/demo/app', branch: 'main', dirty: false }
 const OTHER_REPO_ROW = { id: 'w2', title: 'other', path: '/tmp/demo/other', root: '/tmp/demo/other', branch: 'main', dirty: false }
 
@@ -528,7 +536,9 @@ globalThis.fetch = (url, options) => {
         : action === 'unarchive' || action === 'deleteArchived'
           ? archiveMutation
           : action === 'repos'
-            ? { ok: true, repos: [REPO_ROW, OTHER_REPO_ROW] }
+            ? reposUnavailable
+              ? { ok: false, error: 'bad-action' }
+              : { ok: true, repos: [REPO_ROW, OTHER_REPO_ROW] }
             : action === 'list'
               ? body.dir === NON_REPO_DIR
                 ? { ok: false, error: 'not-a-repository', dir: body.dir }
@@ -666,6 +676,24 @@ check(
 )
 check('the listing renders for it', outsideText.includes('worktree/feat'), outsideText.slice(0, 300))
 check('no session-directory refusal is shown', !outsideText.includes('不是 git 仓库') && !outsideText.includes('当前会话目录'), outsideText.slice(0, 300))
+// The same resolution has to work against a host that does not answer `repos` —
+// an older host, or a profile without the workspace controller. Then the client
+// probes its own workspace list with `list` until a repository answers, so a
+// refresh is enough and no restart is required.
+process.stdout.write('\nsettings: project resolved without the host action\n')
+reposUnavailable = true
+sessionList.byId.s1.cwd = NON_REPO_DIR
+slots = []
+calls.length = 0
+const probed = await settle(props)
+const probedText = textsOf(probed).join(' | ')
+check(
+  'the project is resolved from the workspace list by probing',
+  calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path),
+  JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
+)
+check('that project is named as well', probedText.includes('demo'), probedText.slice(0, 200))
+reposUnavailable = false
 sessionList.byId.s1.cwd = '/tmp/demo/app'
 // Leave the page where the rest of the suite expects it: the probe above parked
 // it on a directory that is not a repository, and the archived-sessions card is
