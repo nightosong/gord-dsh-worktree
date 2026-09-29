@@ -523,7 +523,9 @@ globalThis.fetch = (url, options) => {
             ? body.dir === NON_REPO_DIR
               ? { ok: false, error: 'not-a-repository', dir: body.dir }
               : listing
-            : action === 'create'
+            : action === 'settings'
+              ? { ok: true, settings: { defaultParent: body.defaultParent }, defaultParent: body.defaultParent }
+              : action === 'create'
               ? {
                   ok: true,
                   path: '/tmp/demo/app-worktrees/new',
@@ -629,6 +631,23 @@ check(
   JSON.stringify(calls.map((call) => call.body.dir)),
 )
 check('the recovered repository is rendered', recoveredText.includes('/tmp/demo/app') && recoveredText.includes('main'), recoveredText.slice(0, 200))
+
+process.stdout.write('\nsettings: default worktree parent\n')
+// The value the page shows is the one the host will use, and saving it goes
+// over the route: 0.1.7 has no plugin settings namespace for the page to write.
+const parentField = findByClass(recovered, 'gord-dsh-worktree-parent')
+check('the panel shows where new worktrees go', parentField?.props.value === '/tmp/demo/app-worktrees', JSON.stringify(parentField?.props.value))
+parentField?.props.onChange({ target: { value: '~/Worktrees' } })
+const editedParent = await settle(props)
+calls.length = 0
+findButton(editedParent, '保存')?.props.onClick()
+const savedParent = await settle(props)
+check(
+  'saving posts the typed parent to the host',
+  calls.some((call) => call.action === 'settings' && call.body.defaultParent === '~/Worktrees'),
+  JSON.stringify(calls.map((call) => [call.action, call.body.defaultParent ?? call.body.dir])),
+)
+check('the panel reports the save', textsOf(savedParent).join(' ').includes('已保存'), textsOf(savedParent).join(' ').slice(-160))
 
 sessionList.byId.s1.cwd = NON_REPO_DIR
 slots = []

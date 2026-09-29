@@ -265,7 +265,7 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 
 | 字段 | 默认值 | 含义 |
 | ---- | ------ | ---- |
-| `defaultParent` | *空* | 新建 worktree 的父目录。留空用 `$DSH_HOME/worktree/`。 |
+| `defaultParent` | *空* | 新建 worktree 的父目录。留空用 `$DSH_HOME/worktree/`。可直接在*设置 → 工作树*页里改；初始值取 profile 条目里的 `defaultParent`。 |
 
 *设置 → 工作树* 页一次管理一个仓库：默认取当前会话所在目录（开在仓库里的会话就对着那个仓库），没有会话
 时用你上次用过的路径；页面上会写清它跟随的会话目录，两者都不是仓库时错误信息会写明它到底检查的是哪个目录（留空时服务端会按自己的

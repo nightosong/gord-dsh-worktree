@@ -19,6 +19,10 @@ import * as archive from '../lib/archive.js'
 import * as service from '../lib/service.js'
 import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode, worktreeList } from '../lib/worktree.js'
 
+// The panel's own settings store is read during `apply`, so a test run must not
+// read — or write — the user's file: point it at a throwaway path first.
+process.env.GORD_DSH_WORKTREE_PANEL_SETTINGS = join(mkdtempSync(join(tmpdir(), 'gord-panel-')), 'panel.json')
+
 let failures = 0
 let checks = 0
 
@@ -316,6 +320,13 @@ try {
   plugin.apply(routeCtx, { defaultParent: '' })
   const apiHandler = routes.get('/gord-dsh-worktree/api')
   check('the panel API registers its route', typeof apiHandler === 'function')
+  // The health route reports this string, and it drifted once already: a
+  // version nobody recomputes is a version that lies about what is installed.
+  check(
+    'the reported plugin version matches the package',
+    plugin.PLUGIN_VERSION === JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version,
+    `${plugin.PLUGIN_VERSION} vs package.json`,
+  )
 
   /** Call one panel action and return the JSON body the route wrote. */
   const callApi = async (action, body) => {
@@ -348,6 +359,30 @@ try {
   // where it is, so adopting there would add a sidebar entry nobody asked for.
   check('the tool path adopts nothing', adopted.length === 1, JSON.stringify(adopted))
   check('panel create reports the path it made', routed.path === join(scratch, 'worktree', 'worktree-route-check'), routed.path)
+
+  // The panel owns one setting, and it has to own it: 0.1.7 dropped per-plugin
+  // settings namespaces, leaving a plugin's profile row as the only place for a
+  // default — and that row lives in a file the page cannot write. Saving over
+  // the route is what makes the field on the page real, and the parent it names
+  // has to be the one a later create actually uses.
+  const savedParent = await callApi('settings', { defaultParent: join(scratch, 'panel-parent') })
+  check('the panel saves its default worktree parent', savedParent.ok === true && savedParent.defaultParent === join(scratch, 'panel-parent'), JSON.stringify(savedParent))
+  const listedParent = await callApi('list', { dir: repo })
+  check('the listing reports the saved parent', listedParent.defaultParent === join(scratch, 'panel-parent'), JSON.stringify({ defaultParent: listedParent.defaultParent, settings: listedParent.settings }))
+  const underSaved = await callApi('create', { dir: repo, branch: 'worktree/panel-parent-check', base: 'main' })
+  check(
+    'a new worktree lands under the saved parent',
+    underSaved.ok === true && underSaved.path === join(scratch, 'panel-parent', 'worktree-panel-parent-check'),
+    JSON.stringify({ ok: underSaved.ok, path: underSaved.path }),
+  )
+  const refusedParent = await callApi('settings', { defaultParent: 'worktrees' })
+  check('a relative parent is refused over the route', refusedParent.ok === false, JSON.stringify(refusedParent))
+  const clearedParent = await callApi('settings', { defaultParent: '' })
+  check(
+    'an empty parent restores the built-in default',
+    clearedParent.ok === true && clearedParent.defaultParent === defaultWorktreeParent(),
+    JSON.stringify(clearedParent),
+  )
 
   // A branch that exists only on a remote is the case that used to be silently
   // wrong: naming it created a fresh branch of the same name off the local base,

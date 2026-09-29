@@ -402,7 +402,7 @@ point at another one.
 
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
-| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. |
+| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Editable from *Settings → Worktrees*; the profile entry's `defaultParent` is the value it starts from. |
 
 The *Settings → Worktrees* page asks one repository at a time. It starts from the active session's
 directory — so a session working in a repository opens on that repository — falls back to the path you
