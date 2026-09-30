@@ -1244,7 +1244,7 @@ archivePayload = {
     // has a log to date, so its row shows the last write, not the archive time.
     { id: 'session-bbb', title: '排查线上 5xx', cwd: '/Users/me/code/atlas', createdAt, updatedAt, archivedAt: null, sizeBytes: 1024 },
     // Never titled, and never written after it was created: the fallback date.
-    { id: 'session-ccc', cwd: '/Users/me/code/maas', createdAt: Date.UTC(2025, 6, 1, 1, 0), archivedAt: Date.UTC(2025, 8, 20, 1, 0), sizeBytes: 2048 },
+    { id: 'session-d4ff24a7-0a4a-4a6b-bcf4-f4ba73cdba2e', cwd: '/Users/me/code/maas', createdAt: Date.UTC(2025, 6, 1, 1, 0), archivedAt: Date.UTC(2025, 8, 20, 1, 0), sizeBytes: 2048 },
   ],
 }
 
@@ -1258,7 +1258,29 @@ check('settings page renders the archive section', archiveSection !== undefined)
 const archiveText = textsOf(archiveSection).join(' | ')
 check('the archive asks the host for its records', calls.some((call) => call.action === 'archived'))
 check('archive lists every record', archiveText.includes('重构计费链路') && archiveText.includes('排查线上 5xx'), archiveText.slice(0, 300))
-check('archive labels an untitled session by its id', archiveText.includes('session-ccc'), archiveText.slice(0, 300))
+check('a titled row keeps its title', archiveText.includes('重构计费链路') && archiveText.includes('排查线上 5xx'), archiveText.slice(0, 300))
+// An untitled record is identified by its id, and a uuid is unreadable in full:
+// the head and the tail are what tell two of them apart.
+check(
+  'archive shortens the id of an untitled session',
+  archiveText.includes('session-...-f4ba73cdba2e'),
+  archiveText.slice(0, 300),
+)
+// The id and the title are one line of identification, id first. The row's facts
+// are the second line, so this line must not wrap: it ellipsises the title.
+const firstArchiveRow = findAllByClass(archiveSection, 'gord-dsh-worktree-archive-row')[0]
+const firstRowText = textsOf(firstArchiveRow).join(' | ')
+check(
+  'and puts the id ahead of the title it identifies',
+  firstRowText.indexOf('session-aaa') < firstRowText.indexOf('重构计费链路'),
+  firstRowText,
+)
+const labelRow = findParent(firstArchiveRow, '重构计费链路')
+check(
+  'the identifying line never wraps',
+  labelRow?.props?.style?.whiteSpace === 'nowrap' && labelRow?.props?.style?.overflow === 'hidden',
+  JSON.stringify(labelRow?.props?.style),
+)
 // One time per row, and it is the last write — never the archive time, and never
 // both dates at once.
 check('archive dates a row by its last write', archiveText.includes(stamp(updatedAt)), archiveText.slice(0, 300))
@@ -1392,13 +1414,13 @@ check('the confirm buttons cap the block, below the text', (() => {
   return body !== -1 && submit > body && cancel > submit
 })(), JSON.stringify(textsOf(confirmBlock)))
 
-archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-ccc'], skipped: [] }
+archiveMutation = { ok: true, deleted: ['session-aaa', 'session-bbb', 'session-d4ff24a7-0a4a-4a6b-bcf4-f4ba73cdba2e'], skipped: [] }
 const confirmButton = findButton(askedConfirm, '永久删除')
 check('the confirm offers a submit', confirmButton !== undefined)
 confirmButton?.props.onClick()
 const deleted = await settle(props)
 const deleteCall = calls.filter((call) => call.action === 'deleteArchived').pop()
-check('delete posts the ids it listed, not a flag', JSON.stringify(deleteCall?.body?.ids) === JSON.stringify(['session-aaa', 'session-bbb', 'session-ccc']), JSON.stringify(deleteCall?.body))
+check('delete posts the ids it listed, not a flag', JSON.stringify(deleteCall?.body?.ids) === JSON.stringify(['session-aaa', 'session-bbb', 'session-d4ff24a7-0a4a-4a6b-bcf4-f4ba73cdba2e']), JSON.stringify(deleteCall?.body))
 check('delete is reported back', textsOf(deleted).join(' ').includes('已删除 3 个会话'), textsOf(deleted).join(' ').slice(-260))
 
 process.stdout.write('\nsettings: archive edge cases\n')
