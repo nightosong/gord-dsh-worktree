@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
+import { zstdCompressSync } from 'node:zlib'
 import { basename, dirname } from 'node:path'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -718,6 +719,12 @@ try {
   check('a record parses its times', parsedRecord.archivedAt['session-a'] === 123, JSON.stringify(parsedRecord))
   check('a null time survives parsing as null', parsedRecord.archivedAt['session-b'] === null)
   check('a non-numeric time becomes unknown', parsedRecord.archivedAt['session-c'] === null, JSON.stringify(parsedRecord))
+  // Titles are additive: a record written before they existed still parses, and
+  // a blank one means "this log had no prompt", which is worth remembering too.
+  check('a record written before titles existed still parses', Object.keys(parsedRecord.titles).length === 0, JSON.stringify(parsedRecord.titles))
+  const titledParsed = archive.parseArchiveRecord('{"version":1,"archivedAt":{"session-a":123},"titles":{"session-a":"重构计费链路","session-b":"   "}}')
+  check('a record parses the titles it carries', titledParsed.titles['session-a'] === '重构计费链路', JSON.stringify(titledParsed))
+  check('a blank title is kept as looked-at, not dropped', typeof titledParsed.titles['session-b'] === 'string' && titledParsed.titles['session-b'].trim() === '', JSON.stringify(titledParsed.titles))
 
   // The first sync ever is the one that must not lie: those sessions were
   // archived before anything was recording, so dating them `now` would report
@@ -732,6 +739,12 @@ try {
   check('re-archiving records a fresh time, not the old one', restored.archivedAt['session-b'] === 7000, JSON.stringify(restored))
   check('an unchanged record compares equal', archive.sameArchiveRecord(stamped, archive.reconcileArchiveRecord(stamped, ['session-a', 'session-c'], 9000, false)))
   check('a changed record compares unequal', !archive.sameArchiveRecord(stamped, restored))
+  const withTitle = archive.reconcileArchiveRecord({ ...titledParsed, archivedAt: { 'session-a': 123 } }, ['session-a', 'session-c'], 8000, false)
+  check('a title survives a sync that keeps its id', withTitle.titles['session-a'] === '重构计费链路', JSON.stringify(withTitle))
+  check('a title for an id no longer archived is dropped', !('session-b' in withTitle.titles), JSON.stringify(withTitle.titles))
+  const blankKept = archive.reconcileArchiveRecord({ archivedAt: {}, titles: { 'session-a': '' } }, ['session-a'], 1, false)
+  check('a looked-at-but-untitled session is not read again', blankKept.titles['session-a'] === '', JSON.stringify(blankKept.titles))
+  check('a record differing only in titles compares unequal', !archive.sameArchiveRecord(withTitle, { ...withTitle, titles: {} }))
 
   const rows = archive.archiveRows(
     ['session-a', 'session-b', 'session-c'],
@@ -865,6 +878,42 @@ try {
   check('the tombstone is not counted in the total either', archivedList.total === 1, String(archivedList.total))
   check('the listing carries the cached title', archivedList.records[0].title === 'a title from the cache', JSON.stringify(archivedList.records[0]))
   check('the listing carries the header date and cwd', archivedList.records[0].createdAt === 42 && archivedList.records[0].cwd === '/tmp/project', JSON.stringify(archivedList.records[0]))
+  // The reported case: the projection that named a session is usually gone by the
+  // time it is archived, so the log is the only thing left that says what it was
+  // about. Its first prompt is read once and written into the record.
+  const prompt = '帮我查询下，最近一周的错误类型'
+  const titledDir = join(dshHomePath('sessions'), '--tmp-project--', 'session-titled')
+  mkdirSync(titledDir, { recursive: true })
+  const sessionHeader = JSON.stringify({ type: 'session', version: 4, id: 'session-titled', cwd: '/tmp/project' })
+  const promptEvent = JSON.stringify({ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: prompt }] } })
+  // Two frames, the way a log is written: one per append.
+  writeFileSync(join(titledDir, 'session.v4.jsonl.zstd'), Buffer.concat([
+    zstdCompressSync(Buffer.from(`${sessionHeader}\n`)),
+    zstdCompressSync(Buffer.from(`${promptEvent}\n`)),
+  ]))
+  // No projection row and no cache row, which is exactly an archived session's situation.
+  const logOnlyDeps = (ids) => ({
+    registry: fakeRegistry(ids),
+    now: () => 1,
+    persistence: { list: async () => [{ header: { id: 'session-titled', cwd: '/tmp/project', createdAt: 42 } }] },
+    cache: { cachedSnapshot: () => undefined },
+  })
+  const logTitled = await archive.listArchived(logOnlyDeps(['session-titled']))
+  check('an archived session with no projection is titled from its log', logTitled.records[0]?.title === prompt, JSON.stringify(logTitled.records[0]))
+  check('and the title is recorded beside the archive time', (await archive.readArchiveRecordFile(recordPath)).titles['session-titled'] === prompt, JSON.stringify((await archive.readArchiveRecordFile(recordPath)).titles))
+  // Recorded means not read again: a log that no longer yields anything still answers.
+  writeFileSync(join(titledDir, 'session.v4.jsonl.zstd'), 'not a log any more')
+  const fromRecord = await archive.listArchived(logOnlyDeps(['session-titled']))
+  check('the recorded title answers without reading the log again', fromRecord.records[0]?.title === prompt, JSON.stringify(fromRecord.records[0]))
+  // A session whose log holds no prompt is listed untitled, and remembered as
+  // looked at so the fruitless read does not happen on every listing.
+  const quietDir = join(dshHomePath('sessions'), '--tmp-project--', 'session-quiet')
+  mkdirSync(quietDir, { recursive: true })
+  writeFileSync(join(quietDir, 'session.v4.jsonl.zstd'), 'not a log')
+  const quietList = await archive.listArchived({ registry: fakeRegistry(['session-quiet']), now: () => 1, persistence: { list: async () => [] }, cache: undefined })
+  check('a session with no prompt to read is listed untitled', quietList.records[0]?.title === undefined, JSON.stringify(quietList.records[0]))
+  check('and it is remembered as looked at', (await archive.readArchiveRecordFile(recordPath)).titles['session-quiet'] === '', JSON.stringify((await archive.readArchiveRecordFile(recordPath)).titles))
+
   // The last write is read off the log directory, not off a projection: the
   // directory's newest mtime, which is the same scan that answers the size.
   check('the listing dates the row by its newest log write', typeof archivedList.records[0].updatedAt === 'number' && archivedList.records[0].updatedAt > 0, JSON.stringify(archivedList.records[0]))

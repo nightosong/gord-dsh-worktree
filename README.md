@@ -346,9 +346,17 @@ that does the archiving. A session that is archived leaves every grouping surfac
 review and no control to undo it.
 
 **Settings → Worktrees** now ends with an *Archived sessions* card listing every session archived on
-this machine, newest archive first: its title, the project it ran in, when it was created, when it was
-archived, and how much its log takes on disk. Each row carries **Unarchive** and a delete icon, and the card's
+this machine, newest archive first: its id and title, the project it ran in, when its log was last
+written, and how much it takes on disk. Each row carries **Unarchive** and a delete icon, and the card's
 top right carries **Delete all**.
+
+The id leads the row in short form — `session-...-f4ba73cdba2e`, the head and the tail — because the
+title is what identifies a session and the id is what identifies a record, and the full pair is on the
+row's hover. Titles are recorded, not re-derived: DSH's own title is a projection row that is usually
+gone by the time a session is archived, so the plugin writes a snapshot beside the archive time, taken
+from the projection while it lasts and otherwise from the first prompt in the session's own log. Each
+one is read once, kept, and read again only if nothing could answer. That is also what gives the
+sessions archived before this version a title.
 
 Unarchiving writes through the registry's own serialized operation queue and its `setState` — the pair
 `archiveSession` itself uses — so the change is durable *and* lands on screen at once: the sidebar gets
