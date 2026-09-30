@@ -28,7 +28,7 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 
 ![A session running in a worktree, with the New Session row's working-location picker](images/session-in-worktree.png)
 
-![The Worktrees settings page: the workspace picker, the worktree list with its two-layer rows and actions, and the archived-sessions card](images/worktree-settings.png)
+![The Worktrees settings page: the workspace picker, the worktree list with its two-layer rows and actions, and the archived-sessions card](images/settings-worktrees.png)
 
 ## Install
 

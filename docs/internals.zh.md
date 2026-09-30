@@ -29,7 +29,7 @@
 
 ![会话运行在 worktree 中，新会话行显示工作位置选择器](images/session-in-worktree.png)
 
-![工作树设置页：工作区下拉、两层显示的工作树列表及其操作，以及归档的会话卡片](images/worktree-settings.png)
+![工作树设置页：工作区下拉、两层显示的工作树列表及其操作，以及归档的会话卡片](images/settings-worktrees.png)
 
 ## 安装
 

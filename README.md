@@ -5,7 +5,9 @@ parallel work in its own directory and branch. Ships **Fast mode (快速模式)*
 
 [中文说明](README.zh.md) · [Long-form notes](docs/internals.md)
 
-![The Worktrees settings page](docs/images/worktree-settings.png)
+![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
+![A session running in a worktree, with the New Session row's working-location picker](docs/images/session-in-worktree.png)
+![The Worktrees settings page: the worktree list and the archived sessions card](docs/images/settings-worktrees.png)
 
 ## What it does
 
