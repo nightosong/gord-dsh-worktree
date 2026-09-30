@@ -1516,6 +1516,17 @@ check(
   calls.some((call) => call.action === 'create' && call.body.dir === REPO_ROW.path),
   JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
+// The sidebar files a worktree under the project it came from by reading this
+// map, and a `create` response names the new directory but not its project —
+// so it has to be published from the project that was resolved. Without this
+// the new worktree turns up as a workspace of its own, which is exactly what
+// was reported.
+const chipParents = JSON.parse(globalThis.window.localStorage.getItem('gord-worktree:parents') ?? '{}')
+check(
+  'the new worktree is published as belonging to its project',
+  chipParents['/tmp/demo/app-worktrees/new'] === REPO_ROW.root,
+  JSON.stringify(chipParents),
+)
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

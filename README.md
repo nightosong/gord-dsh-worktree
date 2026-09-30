@@ -120,9 +120,11 @@ opened inside it, ready for your first message. Once there, the branch is yours 
 branches with ordinary git when the task calls for it; changing branch does not need a new worktree.
 
 **Which project, and where the checkout goes.** A worktree belongs to a project, and the project is
-resolved rather than chosen: the repository the session is working in, or — when the session sits in a
-directory that is not a repository, which is common — the most recently used of your workspace
-repositories. The control names the project it will use, so nothing is decided invisibly, and the new
+resolved rather than chosen: it is the workspace the new session is being started in — read from the
+picker in the same row, or from the session itself — and that workspace's repository, or the repository
+inside it when the workspace is a container of projects (`apifree` holds `backend/rest-atlas` and
+`backend/oms-atlas`; `x-gordon` holds four more). Only when none of that is readable does it fall back
+to the most recently used repository workspace. The control names the project it will use, so nothing is decided invisibly, and the new
 worktree is cut from that project's current branch. The checkout itself always lands in
 `$DSH_HOME/worktree/`, outside every project: a worktree inside its own repository shows up in that
 project's `git status` and diffs, which is what that location exists to avoid. A requested path inside
@@ -133,6 +135,12 @@ session is created, and the blank session in the composer is created before anyt
 is no later moment at which a message could be aimed at a directory that does not exist yet. Creating
 the worktree and the session together is the only order that works; a version that created the worktree
 and left the session alone reported success and quietly ran the conversation in the project anyway.
+
+**A worktree is filed under the project it came from.** The sidebar groups them by a map the plugin
+publishes from the project root, so a worktree is not a project of its own: it sits under the project it
+was cut from, the way the original release showed it. A `create` response names the new directory but
+not its project, so the root has to be published from what was resolved — otherwise the worktree appears
+at the top level until something else happens to list the project.
 
 **A worktree is registered as a workspace, and that is not a choice.** Workspace membership is exact
 path equality (`sessionPath(id) === record.path`), `attachSession` rejects a session whose cwd differs
