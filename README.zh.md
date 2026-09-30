@@ -6,7 +6,6 @@
 [English](README.md) · [详细说明](docs/internals.zh.md)
 
 ![新会话行上的工作树选择器，展开态：当前工作树与新建工作树](docs/images/new-session-worktree-picker.png)
-![会话运行在 worktree 中，新会话行显示工作位置选择器](docs/images/session-in-worktree.png)
 ![工作树设置页：工作树列表与归档的会话卡片](docs/images/settings-worktrees.png)
 
 ## 功能
