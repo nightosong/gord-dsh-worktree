@@ -127,7 +127,8 @@ to the most recently used repository workspace. The control names the project it
 worktree is a second checkout of that project's current branch — the branch the project itself is on,
 upstream and all, rather than a generated name of its own, so parallel copies of one project work on
 the same line of work and the one row that is the project is marked as such. It always lands in
-`$DSH_HOME/worktree/`, outside every project: a worktree inside its own repository shows up in that
+`$DSH_HOME/worktree/`, under a short random code rather than the branch name — one branch can be checked out in
+several worktrees, so a branch-named directory could not stay unique — and outside every project: a worktree inside its own repository shows up in that
 project's `git status` and diffs, which is what that location exists to avoid. A requested path inside
 the project is refused rather than quietly relocated.
 

@@ -37,6 +37,8 @@ process.stdout.write('minimal React runtime\n')
 let cursor = 0
 /** Hook value store, indexed by hook position (stable because hook order is). */
 let slots = []
+/** Session-store listeners the branch line registers, so a test can fire one. */
+const sessionUpdates = []
 /** Effects scheduled by the current render, flushed after it returns. */
 let pendingEffects = []
 /** Cleanup returned by each effect, keyed by hook position. */
@@ -239,6 +241,18 @@ process.stdout.write('\nloading the bundle\n')
 /** The bundle registers itself here instead of in a browser. */
 let registration
 globalThis.window = {
+  // The branch line drops its cache when the window is focused again, so the
+  // stub has to hold the listener for a test to fire it.
+  // A list per event: this suite applies the bundle more than once, and every
+  // apply that registers a focus listener deserves to be told about the focus.
+  listeners: {},
+  addEventListener(name, handler) {
+    if (!Array.isArray(this.listeners[name])) this.listeners[name] = []
+    this.listeners[name].push(handler)
+  },
+  removeEventListener(name, handler) {
+    this.listeners[name] = (this.listeners[name] ?? []).filter((entry) => entry !== handler)
+  },
   __ModuleLoader__: {
     load(spec) {
       registration = spec
@@ -449,6 +463,9 @@ root.plugin({
       inject(name, factory) {
         if (name === 'conversation.input.dock') chipSpec = { name, factory }
         else if (name.startsWith('sidebar.right.')) sidebarSpecs.push(name)
+        // The session hover slot: this context has no seat for it, and letting it
+        // fall through would overwrite the settings section this context is for.
+        else if (name === 'sidebar.session.row.hover') { /* not this context's seat */ }
         else sectionSpec = { name, factory }
         return factory()
       },
@@ -462,6 +479,10 @@ root.plugin({
         } else if (spec.name === 'sidebar.right.pane.tab.title') {
           diffTitleSpec = { ...diffTitleSpec, spec }
           DiffTitle = component
+        } else if (spec.name === 'sidebar.session.row.hover') {
+          // A slot this context does not own and nothing here looks at: the
+          // hover suite mounts the context that captures it. Falling through to
+          // the settings section would let it shadow the real registration.
         } else {
           sectionSpec = { ...sectionSpec, spec }
           Section = component
@@ -611,7 +632,11 @@ globalThis.fetch = (url, options) => {
                 ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
                 : action === 'adopt'
                   ? { ok: true, workspace: { workspaceId: body.path.includes('worktrees') ? 'w2' : 'w1', path: body.path, title: 'feat' } }
-                  : { ok: true, output: '' }
+                  : action === 'branch'
+                    ? body.dir === NON_REPO_DIR
+                      ? { ok: true }
+                      : { ok: true, root: '/tmp/demo/app', branch: 'worktree/feat' }
+                    : { ok: true, output: '' }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
 }
 
@@ -1526,7 +1551,7 @@ const missingTypes = (tree) => typesOf(tree).filter((type) => type === undefined
  * @returns the registered chip component, the guide icon, and the recorder.
  */
 async function mountSurfaces(module, options = {}) {
-  const seen = { chip: undefined, guide: undefined }
+  const seen = { chip: undefined, guide: undefined, hover: undefined, hoverSpec: undefined }
   const record = { created: [], opened: [], revealed: [] }
   const ctx = new Context()
   ctx.plugin({
@@ -1537,7 +1562,15 @@ async function mountSurfaces(module, options = {}) {
         bind: () => (key) => bundle.DICT.zh[key] ?? key,
       })
       serviceCtx.provide('sessions', {
-        list: { getSnapshot: () => sessionList, subscribe: () => () => {} },
+        list: {
+          getSnapshot: () => sessionList,
+          // A branch can change while the window keeps the focus — an agent
+          // running `git switch` — so the line drops its cache on session updates.
+          subscribe: (listener) => {
+            sessionUpdates.push(listener)
+            return () => {}
+          },
+        },
         create: (opts) => {
           const sessionId = `other-${record.created.length + 1}`
           record.created.push({ workspaceId: opts.workspaceId, sessionId })
@@ -1555,6 +1588,12 @@ async function mountSurfaces(module, options = {}) {
         },
         register(spec, component) {
           if (spec.name === 'conversation.input.dock') seen.chip = component
+          // The session hover card's slot: the second seat this plugin takes in
+          // something it does not own, and the one that needs the host.
+          if (spec.name === 'sidebar.session.row.hover') {
+            seen.hover = component
+            seen.hoverSpec = spec
+          }
           return () => {}
         },
       })
@@ -1742,6 +1781,74 @@ check(
   'the new worktree is published as belonging to its project',
   chipParents['/tmp/demo/app-worktrees/new'] === REPO_ROW.root,
   JSON.stringify(chipParents),
+)
+
+process.stdout.write('\nsession hover branch\n')
+/** Render the hover slot's branch line to quiescence, as a fresh mount. */
+async function renderHover(component, sessionId, passes = 40) {
+  slots = []
+  cleanups = {}
+  let tree
+  for (let pass = 0; pass < passes; pass++) {
+    dirty = false
+    beginRender()
+    tree = resolve(component({ sessionId }))
+    for (const effect of pendingEffects.splice(0)) effect()
+    for (let flush = 0; flush < 4; flush++) await new Promise((resolve) => setImmediate(resolve))
+    if (!dirty) break
+  }
+  return tree
+}
+
+check(
+  'the branch line registers into the session row hover slot',
+  withNavigation.hoverSpec?.name === 'sidebar.session.row.hover' && typeof withNavigation.hover === 'function',
+  JSON.stringify(withNavigation.hoverSpec),
+)
+const hovered = await renderHover(withNavigation.hover, 's1')
+check(
+  'the hover card shows the branch of the session directory',
+  textsOf(hovered).join('').includes('worktree/feat'),
+  textsOf(hovered).join(''),
+)
+check(
+  'the branch line forgets its cache when the window is focused',
+  Array.isArray(globalThis.window.listeners.focus) && globalThis.window.listeners.focus.length > 0,
+  JSON.stringify(Object.keys(globalThis.window.listeners)),
+)
+// A checkout in another window is what regaining focus means, and the cached
+// branch was read from the directory the session had before it.
+for (const forget of globalThis.window.listeners.focus ?? []) forget()
+const branchCalls = () => calls.filter((call) => call.action === 'branch').length
+const readsBefore = branchCalls()
+sessionList.byId.s1.cwd = NON_REPO_DIR
+const hovering = await renderHover(withNavigation.hover, 's1')
+check(
+  'a session outside a repository shows no branch',
+  hovering === null || hovering === undefined,
+  JSON.stringify(textsOf(hovering).join('')),
+)
+check(
+  'and the branch is read again only once the window is focused',
+  branchCalls() === readsBefore + 1,
+  JSON.stringify(branchCalls()),
+)
+
+// An agent switching branch mid-turn is invisible to focus and to any timer: the
+// session's own update is what says the working directory moved under the card.
+sessionList.byId.s1.cwd = '/tmp/demo/app'
+const beforeUpdate = branchCalls()
+for (const listener of sessionUpdates) listener()
+const afterUpdate = await renderHover(withNavigation.hover, 's1')
+check(
+  'the branch line drops its cache when the session updates',
+  branchCalls() === beforeUpdate + 1 && textsOf(afterUpdate).join('').includes('worktree/feat'),
+  JSON.stringify({ calls: branchCalls(), text: textsOf(afterUpdate).join('') }),
+)
+check(
+  'the branch line is told when the tab is looked at again',
+  Array.isArray(globalThis.window.listeners.focus) && globalThis.window.listeners.focus.length > 0,
+  JSON.stringify(Object.keys(globalThis.window.listeners)),
 )
 
 process.stdout.write('\nlocalization\n')

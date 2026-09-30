@@ -117,7 +117,11 @@ try {
   const created = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main' })
   check('create ok', created.ok === true, JSON.stringify(created))
   check('create reports a new branch', created.createdBranch === true)
-  check('create used the default parent', created.path === join(scratch, 'worktree', 'worktree-feature-a'), created.path)
+  check(
+    'create used the default parent and named the directory by its code',
+    dirname(created.path) === join(scratch, 'worktree') && /^[0-9a-f]{8}$/.test(basename(created.path)),
+    created.path,
+  )
   check('create checked out the branch', created.branch === 'worktree/feature-a', created.branch)
   check('main worktree is untouched', git(repo, 'rev-parse', '--abbrev-ref', 'HEAD') === 'main')
 
@@ -138,8 +142,15 @@ try {
   const badBranch = await service.createWorktree({ dir: repo, branch: '-evil', base: 'main' })
   check('create refuses a leading-dash branch', badBranch.ok === false && badBranch.error === 'invalid-branch', JSON.stringify(badBranch))
 
+  // Naming the branch again gets a fresh directory — the code is per checkout —
+  // so what refuses this is git, not a path collision: the branch is already
+  // checked out in the worktree above. Only a copy of the *current* branch is
+  // forced through that check, because sharing it is what that copy is for.
   const reused = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main' })
-  check('create refuses an occupied target directory', reused.ok === false && reused.error === 'path-in-use', JSON.stringify(reused))
+  check('create refuses a named branch already checked out', reused.ok === false && reused.error === 'git-failed', JSON.stringify(reused))
+
+  const occupied = await service.createWorktree({ dir: repo, branch: 'worktree/feature-c', base: 'main', path: created.path })
+  check('create refuses an occupied target directory', occupied.ok === false && occupied.error === 'path-in-use', JSON.stringify(occupied))
 
   const doubleCheckout = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main', path: join(scratch, 'worktree', 'other') })
   check('create refuses a branch checked out elsewhere', doubleCheckout.ok === false && doubleCheckout.error === 'git-failed', JSON.stringify(doubleCheckout))
@@ -202,9 +213,12 @@ try {
   // Regression: a worktree whose directory was deleted by hand stays in git's
   // registry; recreating it must name the fix rather than leaking a git error.
   process.stdout.write('\nstale record\n')
+  // Directories are named by their code now, so replaying the *path* is what
+  // asks for the same location again — which is the caller the stale-record
+  // guard exists for, and the only one that can hit it.
   const stale = await service.createWorktree({ dir: repo, branch: 'worktree/stale', base: 'main' })
   rmSync(stale.path, { recursive: true, force: true })
-  const staleAgain = await service.createWorktree({ dir: repo, branch: 'worktree/stale', base: 'main' })
+  const staleAgain = await service.createWorktree({ dir: repo, branch: 'worktree/stale-again', base: 'main', path: stale.path })
   check('create reports a stale registration', staleAgain.ok === false && staleAgain.error === 'stale-record', JSON.stringify(staleAgain))
 
   const finalList = await service.listWorktrees(repo)
@@ -405,18 +419,24 @@ try {
   // path. Without one the shell has nowhere to draw the session and shows
   // "choose a workspace to start" over a session that exists.
   check('panel create registers a workspace', routed.workspace?.workspaceId === 'w-adopted', JSON.stringify(routed.workspace))
-  // Titled after the project, because the sidebar cannot nest a worktree under
-  // it: a bare code reads as an unrelated project.
+  // Titled after the project and its own directory, because the sidebar groups
+  // by workspace with no nesting: a bare code reads as an unrelated project.
   check(
     'the worktree workspace is titled after its project',
-    adoptedTitles.length === 1 && adoptedTitles[0] === `${basename(repo)} · worktree-route-check`,
+    adoptedTitles.length === 1 &&
+      adoptedTitles[0] === `${basename(repo)} · ${basename(routed.path)}` &&
+      /^[0-9a-f]{8}$/.test(basename(routed.path)),
     JSON.stringify(adoptedTitles),
   )
   check('panel create adopts the worktree path', adopted.length === 1 && adopted[0] === routed.path, JSON.stringify({ adopted, path: routed.path }))
   // The tool must not: a worktree made mid-conversation leaves the session
   // where it is, so adopting there would add a sidebar entry nobody asked for.
   check('the tool path adopts nothing', adopted.length === 1, JSON.stringify(adopted))
-  check('panel create reports the path it made', routed.path === join(scratch, 'worktree', 'worktree-route-check'), routed.path)
+  check(
+    'panel create reports the path it made',
+    dirname(routed.path) === join(scratch, 'worktree') && /^[0-9a-f]{8}$/.test(basename(routed.path)),
+    routed.path,
+  )
 
   // The projects a worktree can be cut from: the user's workspaces that are
   // repositories, most recently used first — not the ones that merely contain
@@ -988,6 +1008,78 @@ try {
   ])
   check('the plugin forgets deleted sessions as it loads', outcome === 'pruned', String(outcome))
   check('and only the ones that are gone', loadRegistry.archivedSessionIds.join() === 'session-kept', JSON.stringify(loadRegistry.state))
+
+  process.stdout.write('\nbranch route\n')
+  // The session hover card asks for one branch, and only the host can read it.
+  // `repo` is a repository and `scratch` is not, which is the whole answer the
+  // route has to get right before the client's cache matters.
+  const branchHit = await callApi('branch', { dir: repo, sessionId: 'session-1' })
+  check(
+    'the branch route answers a branch for a directory in a repository',
+    branchHit.ok === true && typeof branchHit.branch === 'string' && branchHit.branch !== '',
+    JSON.stringify(branchHit),
+  )
+  // A session that cut or moved into a worktree works there, not in the directory
+  // it was started from — which it never left, because a session's directory is
+  // fixed — so the card follows the checkout the session is actually on. A fresh
+  // worktree, because the ones above have been taken away again by now.
+  const moved = await service.createWorktree({ dir: repo, branch: 'worktree/session-moved' })
+  check('a worktree to work in is created', moved.ok === true && existsSync(moved.path), JSON.stringify(moved))
+  await archive.rememberSessionWorktree(repo, moved.path)
+  const viaWorktree = await callApi('branch', { dir: repo, sessionId: 'session-1' })
+  check(
+    'the branch route follows the worktree the session works in',
+    viaWorktree.branch === 'worktree/session-moved',
+    JSON.stringify(viaWorktree),
+  )
+
+  // With nothing recorded the log is read once — `cd <worktree>` is what says a
+  // session moved into one — and the answer is written down so it is read once.
+  const backfillDir = join(dshHomePath('sessions'), '--tmp-project--', 'session-backfill')
+  mkdirSync(backfillDir, { recursive: true })
+  const cdCall = JSON.stringify({
+    type: 'tool/call',
+    data: { name: 'bash', arguments: JSON.stringify({ command: `cd ${moved.path} && git status -sb` }) },
+  })
+  writeFileSync(join(backfillDir, 'session.v4.jsonl.zstd'), zstdCompressSync(Buffer.from(`${cdCall}\n`)))
+  const backfilled = await archive.sessionWorktree('/tmp/project-backfill', 'session-backfill')
+  check('a session with no record is read from its log', backfilled === moved.path, `${backfilled} vs ${moved.path}`)
+  check(
+    'and the answer is written down',
+    (await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-backfill'] === moved.path,
+    JSON.stringify((await archive.readSessionWorktreeRecord()).worktrees),
+  )
+  check(
+    'a session whose log shows no worktree is remembered as looked at',
+    (await archive.sessionWorktree('/tmp/project-noworktree', 'session-quiet')) === '' &&
+      (await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-noworktree'] === '',
+    JSON.stringify((await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-noworktree']),
+  )
+
+  const branchMiss = await callApi('branch', { dir: scratch })
+  check(
+    'and claims nothing for a directory outside one',
+    branchMiss.ok === true && branchMiss.branch === undefined,
+    JSON.stringify(branchMiss),
+  )
+  // An archived session's card grows no branch, and the card's slot is only
+  // given the id, so the refusal has to live here.
+  routeCtx.workspaceRegistry.archivedSessionIds = ['session-archived']
+  const branchArchived = await callApi('branch', { dir: repo, sessionId: 'session-archived' })
+  delete routeCtx.workspaceRegistry.archivedSessionIds
+  check(
+    'and refuses an archived session',
+    branchArchived.ok === true && branchArchived.archived === true && branchArchived.branch === undefined,
+    JSON.stringify(branchArchived),
+  )
+  // No directory and no loaded session: silence, not an error, because the card
+  // renders nothing either way and a failure would only reach a console.
+  const branchUnknown = await callApi('branch', { sessionId: 'session-nothing-knows' })
+  check(
+    'and stays silent without a directory to read',
+    branchUnknown.ok === true && branchUnknown.branch === undefined,
+    JSON.stringify(branchUnknown),
+  )
 
 } finally {
   rmSync(scratch, { recursive: true, force: true })
