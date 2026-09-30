@@ -225,6 +225,37 @@ try {
     on: () => {},
   }
   plugin.apply(stubCtx, { defaultParent: '' })
+
+  // Installing the plugin cannot install its browser-bundle patches — pnpm runs
+  // no lifecycle script for a `link:` package — so load does it. The states are
+  // what the settings page and the log report, so they are pinned here.
+  const patchLog = []
+  const patchStates = plugin.ensureBundlePatches(
+    { info: (message) => patchLog.push(['info', message]), warn: (message) => patchLog.push(['warn', message]) },
+    (tool, args) => (tool === 'patch-sidebar.mjs' && args.includes('--check')
+      ? { status: 2, stdout: '', stderr: '' }
+      : { status: 0, stdout: '', stderr: '' }),
+  )
+  check(
+    'a missing bundle patch is installed at load and reported',
+    patchStates[0].state === 'patched' && patchStates[1].state === 'ready',
+    JSON.stringify(patchStates),
+  )
+  check(
+    'installing it says a restart is needed',
+    patchLog.some(([, message]) => message.includes('重启')),
+    JSON.stringify(patchLog),
+  )
+  const unknownLog = []
+  const unknownStates = plugin.ensureBundlePatches(
+    { warn: (message) => unknownLog.push(message) },
+    () => ({ status: 1, stdout: '', stderr: 'not in the expected shape\nmore' }),
+  )
+  check(
+    'a build the tools do not know is reported rather than forced',
+    unknownStates.every((row) => row.state === 'unknown') && unknownLog.every((message) => message.includes('需要更新插件')),
+    JSON.stringify([unknownStates, unknownLog]),
+  )
   const expected = ['worktree_list', 'worktree_create', 'worktree_status', 'worktree_remove', 'worktree_prune']
   check('all five tools register', expected.every((name) => registered.has(name)), [...registered.keys()].join(', '))
   check('no unexpected tool names', registered.size === expected.length, String(registered.size))

@@ -136,11 +136,20 @@ is no later moment at which a message could be aimed at a directory that does no
 the worktree and the session together is the only order that works; a version that created the worktree
 and left the session alone reported success and quietly ran the conversation in the project anyway.
 
-**The sidebar patch has to be re-run after a DSH upgrade.** dsh 0.1.7 widened the session-list
-grouping function by one parameter, and the tool's anchor for the old shape stopped matching — while
-`--check` still called it patched, because the session-list marker is a prefix of the workspace-tree
-marker and it matched the substring. The two sites are separate behaviours now and markers match a line
-of their own, so `--check` reports the site that is missing; `node tools/patch-sidebar.mjs` installs it.
+**The patches are ensured at load, because the install step cannot ensure them.** `dsh plugin add`
+hands its arguments to pnpm, and pnpm runs no lifecycle script for a `link:` package — which is how this
+plugin is normally installed — so there is nowhere to hook. The host half therefore runs both tools on
+every start: an unchecked patch is the one thing an upgrade breaks silently, since the plugin keeps
+loading while the behaviour goes missing. A missing patch is installed and logged with the restart it
+needs, a build whose anchors have moved is warned about instead of forced, and everything already in
+place is a no-op. `node tools/patch-sidebar.mjs --check` (or `npm run check:concurrency`) remains for
+confirming by hand, and `--revert` for undoing.
+
+dsh 0.1.7 is what makes this necessary: it widened the session-list grouping function by one parameter,
+so the anchor for the old shape stopped matching — while `--check` still called it patched, because the
+session-list marker is a prefix of the workspace-tree marker and it matched the substring. The two sites
+are separate behaviours now and markers match a line of their own, so a build patched at only one of them
+is reported as the other being missing.
 
 **A worktree is filed under the project it came from.** The sidebar groups them by a map the plugin
 publishes from the project root, so a worktree is not a project of its own: it sits under the project it
