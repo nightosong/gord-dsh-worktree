@@ -70,7 +70,7 @@ package:
 | Feature | Minimum dsh | Why |
 | ------- | ----------- | --- |
 | Worktree tools, *Settings → Worktrees*, the sidebar *Changes* tab, archived sessions | `0.1.5-rc.1` | The plugin's own code, with a fallback for every interface that changed across 0.1.5–0.1.7 |
-| Sidebar nested grouping and double-click rename | `0.1.5-rc.1` | Patched into the browser bundle; 0.1.7 ships both natively, and the script reports `native` there |
+| Sidebar nested grouping and double-click rename | `0.1.5-rc.1` | Patched into the browser bundle: nested grouping is two sites (the session list and the workspace tree), double-click rename is native from 0.1.7, where the script reports `native` |
 | **Fast mode (快速模式)** | `0.1.7` | A preset is an `@deepseek-ai/dsh-agent-preset` composition row — 0.1.5/0.1.6 discovered presets from `$DSH_HOME/.agent-presets` instead, and 0.1.7 replaced that. On a build without the package the `preset-fast` insert has nothing to mount: delete that insert from `cordis.patch.yml`, or stay on 0.1.7+ |
 | **Concurrent read-only `bash`/`glob`/`grep`** | `0.1.7` | The patch matches the 0.1.7 core files exactly. On any other build `npm run check:concurrency` reports `unknown` and the tool refuses to write rather than guess |
 
@@ -177,13 +177,13 @@ rather than from a version number — patching only the part that build is missi
 
 | DSH | Nesting | Double-click rename |
 | --- | ------- | ------------------- |
-| 0.1.7 on | `owningParentFolder` is extended: besides path containment it reads the parent map this plugin publishes | core ships it; the script reports `native` and does not touch it |
+| 0.1.7 on | both grouping sites: `groupByWorkspace` (the session list — 0.1.7 gave it an `archivedFilter` parameter, so the anchor for the old signature stopped matching) and `owningParentFolder` (the workspace tree); each reads the parent map this plugin publishes besides path containment | core ships it; the script reports `native` and does not touch it |
 | 0.1.6 | the same function (that line already has the *Workspace tree* view and this helper) | adds `onDoubleClick` to the session row |
 | 0.1.5 | `groupByWorkspace` — the whole of the sidebar's grouping — folds a worktree's sessions into the project's group | the same row prop |
 
-**From 0.1.6 on, the nesting only shows once the sidebar's *Group by* is set to *Workspace tree*.** Those
-lines made grouping a view option and still default to *Workspace*, where a worktree is a group of its
-own. The script does not write the user's view options; it says so when it patches.
+**The nesting shows in either grouping.** The default *Workspace* list is `groupByWorkspace` and the
+*Workspace tree* view is `owningParentFolder`; both sites are patched, so a worktree folds under its
+project whichever one the sidebar is set to. The script never writes the user's view options.
 
 Two rules decide the parent: a workspace whose directory is inside another's, and a parent map this
 plugin publishes for worktrees kept outside the project — which is the default,
@@ -217,9 +217,9 @@ like.
 #### Keeping the sidebar clean
 
 The worktree's workspace is titled after its project — `repo · 1dda6ec0`, not a bare `1dda6ec0` — because
-the title is the one place the relationship is visible without the patch. With it applied, the sidebar's
-*Group by → Workspace tree* mode is what folds the worktree under its project; the default *Workspace*
-mode, still, is one group per directory. Codex reads cleanly here for a structural reason rather than a
+the title is the one place the relationship is visible without the patch. With it applied, both the
+default *Workspace* list and the *Workspace tree* view fold the worktree under its project. Codex reads
+cleanly here for a structural reason rather than a
 smarter trick: it groups threads by *project* and treats the worktree as an attribute of a thread, so a
 worktree thread simply lands under its project. DSH's grouping key is the directory, which is why the
 patch has to add the parent relation.

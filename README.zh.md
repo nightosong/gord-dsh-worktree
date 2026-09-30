@@ -64,7 +64,7 @@ npm run patch:concurrency     # 先 --check 看状态，--revert 还原
 | 能力 | 最低 dsh | 原因 |
 | ---- | -------- | ---- |
 | worktree 工具、*设置 → 工作树*、侧栏 *变更* 标签、归档会话 | `0.1.5-rc.1` | 插件自身代码，对 0.1.5–0.1.7 之间变过的每个接口都保留回退 |
-| 侧栏嵌套分组与双击重命名 | `0.1.5-rc.1` | 打进浏览器 bundle 的补丁；0.1.7 原生自带，脚本在那里会报 `native` |
+| 侧栏嵌套分组与双击重命名 | `0.1.5-rc.1` | 打进浏览器 bundle 的补丁：嵌套分组要补两处（会话列表与工作区树），双击重命名 0.1.7 起原生自带，脚本在那里报 `native` |
 | **快速模式（Fast mode）** | `0.1.7` | 预设是 `@deepseek-ai/dsh-agent-preset` 组合行——0.1.5/0.1.6 从 `$DSH_HOME/.agent-presets` 目录发现预设，0.1.7 换掉了这套机制。在没有这个包的构建上，`preset-fast` 那行没有东西可挂：把它从 `cordis.patch.yml` 里删掉，或留在 0.1.7+ |
 | **只读 `bash`/`glob`/`grep` 并发** | `0.1.7` | 补丁按 0.1.7 的核心文件精确匹配锚点。其它构建上 `npm run check:concurrency` 报 `unknown`，工具会拒绝落盘而不是猜 |
 
@@ -204,12 +204,13 @@ npm run unpatch:sidebar               # 还原出厂 bundle
 
 | DSH | 嵌套分组 | 双击重命名 |
 | --- | --- | --- |
-| 0.1.7 起 | 改 `owningParentFolder`：路径包含关系之外，再认插件发布的父级映射 | 核心自带，脚本报 `native`，不动手 |
+| 0.1.7 起 | 两处分组都补：`groupByWorkspace`（会话列表——0.1.7 给它加了 `archivedFilter` 参数，旧签名锚点因此失配）与 `owningParentFolder`（工作区树）；两处都在路径包含关系之外再认插件发布的父级映射 | 核心自带，脚本报 `native`，不动手 |
 | 0.1.6 | 同上（该版本已有「按工作区树」视图和这个函数） | 补会话行的 `onDoubleClick` |
 | 0.1.5 | 改 `groupByWorkspace`——侧栏分组的全部逻辑——把 worktree 折进项目分组 | 同上 |
 
-**0.1.6 起，嵌套要选「分组方式 → 按工作区树」才会显示。** 这些版本把分组做成了视图选项，默认仍是
-「按工作区」——worktree 独立成组。脚本不替用户改视图设置，只在打完补丁时提示一句。
+**两种分组都会嵌套。** 默认的「按工作区」列表走 `groupByWorkspace`，「按工作区树」视图走
+`owningParentFolder`，两处都打上补丁，所以无论侧栏选哪种，worktree 都会折进它所属项目的分组里。
+脚本不替用户改视图设置。
 
 **父级**由两条规则决定：目录位于另一个工作区之内的，以及插件为**放在项目之外**的 worktree 发布的父级映射
 （后者正是默认情形，`$DSH_HOME/worktree/<code>`）。0.1.6 起第二条落在 `owningParentFolder` 里，它是树状
