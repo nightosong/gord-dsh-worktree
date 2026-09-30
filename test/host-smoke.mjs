@@ -424,13 +424,15 @@ try {
   const repos = await callApi('repos', {})
   check('the panel offers the repository workspaces as projects', repos.ok === true && repos.repos.length === 1 && repos.repos[0].path === repo, JSON.stringify(repos))
   check('a project carries the branch it would cut from', repos.repos?.[0]?.branch === 'main' && repos.repos[0].root === repo, JSON.stringify(repos.repos?.[0]))
-  // The fixture is exactly the reported shape: a workspace that is not a
-  // repository but holds one (`apifree/backend/rest-atlas`), so the project has
-  // to be found *inside* the workspace rather than at its root.
+  // The fixture is the reported shape: a workspace that is not a repository but
+  // holds one (`apifree/backend/rest-atlas`). It belongs on the list only for a
+  // caller working in that container — the sidebar has an entry for a workspace,
+  // never for a project merely sitting inside one, and every other container's
+  // children were the bulk of the picker.
   check(
-    'a container workspace contributes the repository inside it',
-    repos.repos[0].inside !== undefined && repos.repos[0].workspace === scratch,
-    JSON.stringify(repos.repos[0]),
+    'a container leaves the picker alone when the caller is not in it',
+    repos.repos.every((row) => row.inside === undefined),
+    JSON.stringify(repos.repos.map((row) => [row.root, row.inside])),
   )
   check('no project is listed twice', new Set(repos.repos.map((row) => row.root)).size === repos.repos.length, JSON.stringify(repos.repos.map((row) => row.root)))
   // Which workspace the caller is in is the question being answered, so it is
@@ -440,6 +442,11 @@ try {
     'a session id selects its own workspace',
     askedBySession.repos[0]?.root === repo && askedBySession.repos[0]?.workspaces.includes(scratch),
     JSON.stringify(askedBySession.repos.map((row) => [row.root, row.workspaces])),
+  )
+  check(
+    'and that container offers the project inside it',
+    askedBySession.repos[0]?.inside !== undefined && askedBySession.repos[0]?.path === repo,
+    JSON.stringify(askedBySession.repos[0]),
   )
   // A workspace that is a worktree — registered by an earlier release — must
   // resolve to the project it was cut from, and must not add a second entry.

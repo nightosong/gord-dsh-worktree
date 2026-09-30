@@ -441,10 +441,10 @@ point at another one.
 
 The *Settings → Worktrees* page opens on one project, and resolves which one for you: the repository
 the active session is working in, or — when that is not a repository — the most recently used of your
-workspace repositories. A picker above the list then names every project the host can read a repository
-out of — a workspace that is one, or each repository inside a container workspace, written
-`apifree › rest-atlas` — and choosing one re-lists that project's worktrees, so the page can be pointed
-anywhere without leaving it. Nothing is ever typed: no path field, no repository diagnostics, and the
+workspace repositories. A picker above the list then names the workspaces that hold a repository — the
+same set the sidebar shows. The one exception is the container the session itself is in, whose projects
+are named `apifree › rest-atlas`: without them a session sitting in a container has nothing to cut from.
+Choosing one re-lists that project's worktrees, so the page can be pointed anywhere without leaving it. Nothing is ever typed: no path field, no repository diagnostics, and the
 composer's own chip keeps deciding where a *new* worktree belongs. Worktrees are created outside every
 project, so a checkout never appears in its own project's diffs.
 
