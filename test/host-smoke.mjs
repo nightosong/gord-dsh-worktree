@@ -296,6 +296,7 @@ try {
   const routes = new Map()
   const adopted = []
   const adoptedTitles = []
+  const extraWorkspaces = []
   const routeCtx = {
     tools: stubCtx.tools,
     effect: (callback) => callback(),
@@ -319,6 +320,9 @@ try {
       list: () => [
         { id: 'w-repo', title: 'the project', path: repo, updatedAt: '2026-09-29T10:00:00.000Z' },
         { id: 'w-container', title: 'a container', path: scratch, updatedAt: '2026-09-29T11:00:00.000Z', sessionIds: ['session-in-container'] },
+        // Filled in by the probe below: a workspace an earlier release left
+        // behind for a worktree, which is the reported "ec0f573c · worktree/…".
+        ...extraWorkspaces,
       ],
     },
     inject(names, callback) {
@@ -394,6 +398,23 @@ try {
     askedBySession.repos[0]?.root === repo && askedBySession.repos[0]?.workspaces.includes(scratch),
     JSON.stringify(askedBySession.repos.map((row) => [row.root, row.workspaces])),
   )
+  // A workspace that is a worktree — registered by an earlier release — must
+  // resolve to the project it was cut from, and must not add a second entry.
+  const worktreePath = join(scratch, 'worktree', 'worktree-route-check')
+  extraWorkspaces.push({ id: 'w-leftover', title: 'ec0f573c', path: worktreePath, updatedAt: '2026-09-29T12:00:00.000Z' })
+  const withLeftover = await callApi('repos', { dir: worktreePath })
+  check(
+    'a leftover worktree workspace resolves to its project',
+    withLeftover.repos[0]?.root === repo && withLeftover.repos[0]?.path === repo,
+    JSON.stringify(withLeftover.repos.map((row) => [row.title, row.path, row.root])),
+  )
+  check(
+    'and is not listed a second time',
+    withLeftover.repos.filter((row) => row.root === repo).length === 1,
+    JSON.stringify(withLeftover.repos.map((row) => row.root)),
+  )
+  extraWorkspaces.length = 0
+
   const askedByDir = await callApi('repos', { dir: join(scratch, 'app') })
   check(
     'a directory selects the workspace containing it',
