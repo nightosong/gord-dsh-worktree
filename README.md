@@ -136,6 +136,12 @@ is no later moment at which a message could be aimed at a directory that does no
 the worktree and the session together is the only order that works; a version that created the worktree
 and left the session alone reported success and quietly ran the conversation in the project anyway.
 
+**The sidebar patch has to be re-run after a DSH upgrade.** dsh 0.1.7 widened the session-list
+grouping function by one parameter, and the tool's anchor for the old shape stopped matching — while
+`--check` still called it patched, because the session-list marker is a prefix of the workspace-tree
+marker and it matched the substring. The two sites are separate behaviours now and markers match a line
+of their own, so `--check` reports the site that is missing; `node tools/patch-sidebar.mjs` installs it.
+
 **A worktree is filed under the project it came from.** The sidebar groups them by a map the plugin
 publishes from the project root, so a worktree is not a project of its own: it sits under the project it
 was cut from, the way the original release showed it. A `create` response names the new directory but

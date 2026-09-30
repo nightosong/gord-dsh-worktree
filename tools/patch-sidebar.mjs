@@ -136,6 +136,70 @@ const ROW_PATCHED = `					role: "treeitem",
 						onRename(node.id, row.title);
 					},`
 
+const LIST_MARKER = 'gord-dsh-worktree: nested worktree grouping (session list)'
+
+// dsh 0.1.7 widened this function with an archived filter. Same grouping, one
+// more parameter — and an anchor for the old shape never matches it, so the
+// session list silently stayed unpatched while the workspace tree was patched,
+// which is the state a worktree shows up in as its own group.
+const LIST_ORIGINAL = `function groupByWorkspace(list, workspaces, archived, archivedFilter, ungroupedOrder) {
+			const current = mainSessionId(list);
+			const groups = [];
+			const accounted = /* @__PURE__ */ new Set();
+			for (const workspace of workspaces) {
+				const members = [];`
+
+const LIST_PATCHED = `// ${LIST_MARKER}
+		//
+		// The project a worktree belongs to, or undefined when it is not one. The
+		// sidebar's hierarchy is one level deep — a workspace group, then session
+		// rows — and the workspace record carries no parent field, so folding is
+		// the only way a worktree's sessions can sit under the project they were
+		// cut from instead of beside it as a second project.
+		function projectWorkspace(workspaces, workspace) {
+			const path = workspace.path;
+			if (typeof path !== "string") return;
+			let best;
+			for (const candidate of workspaces) {
+				if (typeof candidate.path !== "string" || candidate.path === path) continue;
+				const prefix = candidate.path.endsWith("/") ? candidate.path : candidate.path + "/";
+				if (path.startsWith(prefix) && (best === void 0 || candidate.path.length > best.path.length)) best = candidate;
+			}
+			if (best !== void 0) return best;
+			// Outside every workspace's directory: a worktree kept in a home
+			// directory, declared by the plugin that made it. Absent or stale
+			// entries simply do not fold.
+			try {
+				const declared = JSON.parse(globalThis.localStorage?.getItem("gord-worktree:parents") ?? "{}");
+				const parent = declared[path];
+				if (typeof parent !== "string") return;
+				return workspaces.find((candidate) => candidate.path === parent);
+			} catch {
+				return;
+			}
+		}
+		function groupByWorkspace(list, workspaces, archived, archivedFilter, ungroupedOrder) {
+			const current = mainSessionId(list);
+			const groups = [];
+			const accounted = /* @__PURE__ */ new Set();
+			const membersByProject = /* @__PURE__ */ new Map();
+			for (const workspace of workspaces) {
+				const owner = projectWorkspace(workspaces, workspace) ?? workspace;
+				const members = membersByProject.get(owner.workspaceId) ?? [];`
+
+const LIST_TAIL_ORIGINAL = `				if (archivedFilter === "only" && members.length === 0) continue;
+				groups.push(buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members));
+			}`
+
+const LIST_TAIL_PATCHED = `				membersByProject.set(owner.workspaceId, members);
+			}
+			for (const workspace of workspaces) {
+				if (projectWorkspace(workspaces, workspace) !== void 0) continue;
+				const members = membersByProject.get(workspace.workspaceId) ?? [];
+				if (archivedFilter === "only" && members.length === 0) continue;
+				groups.push(buildGroup(workspace.workspaceId, workspace.workspaceId, workspace.path, Date.parse(workspace.createdAt), workspace.title, members));
+			}`
+
 const TREE_MARKER = 'gord-dsh-worktree: nested worktree grouping (workspace tree)'
 
 const TREE_ORIGINAL = `		function owningParentFolder(path, parents) {
@@ -201,12 +265,19 @@ const TREE_PATCHED = `		// ${TREE_MARKER}
  */
 const BEHAVIOURS = [
   {
-    what: 'nested worktree grouping',
+    // The session list is what the left sidebar shows, and it is a separate
+    // patch site from the workspace tree: one behaviour per site, so a build
+    // that moved one of them on cannot hide the other.
+    what: 'nested worktree grouping (session list)',
     variants: [
       {
-        family: 'the 0.1.6+ tree view',
-        marker: TREE_MARKER,
-        replacements: [{ original: TREE_ORIGINAL, patched: TREE_PATCHED, what: 'the worktree ownership rule' }],
+        family: 'the 0.1.7 session list',
+        marker: LIST_MARKER,
+        replacements: [
+          { original: LIST_ORIGINAL, patched: LIST_PATCHED, what: 'the workspace grouping' },
+          { original: LIST_TAIL_ORIGINAL, patched: LIST_TAIL_PATCHED, what: 'the group assembly' },
+          { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
+        ],
       },
       {
         family: 'the 0.1.5 inline grouping',
@@ -215,6 +286,16 @@ const BEHAVIOURS = [
           { original: ORIGINAL, patched: PATCHED, what: 'the workspace grouping' },
           { original: ACCOUNT_ORIGINAL, patched: ACCOUNT_PATCHED, what: 'the blank-session account key' },
         ],
+      },
+    ],
+  },
+  {
+    what: 'nested worktree grouping (workspace tree)',
+    variants: [
+      {
+        family: 'the 0.1.6+ tree view',
+        marker: TREE_MARKER,
+        replacements: [{ original: TREE_ORIGINAL, patched: TREE_PATCHED, what: 'the worktree ownership rule' }],
       },
     ],
   },
@@ -239,9 +320,22 @@ const BEHAVIOURS = [
  * that ships the behaviour itself, and `unknown` means the script has no anchor
  * for this build and must not write anything.
  */
+/**
+ * Whether a marker is on a line of its own.
+ *
+ * Markers are comments, so a line that ends with one is a patch that is really
+ * there. Matching the substring is not enough: the session-list marker is a
+ * prefix of the workspace-tree marker, so a build patched at only the tree site
+ * reported both as patched and the missing one was never installed.
+ */
+function markerPresent(text, marker) {
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`${escaped}\\s*$`, 'm').test(text)
+}
+
 function inspect(text) {
   return BEHAVIOURS.map((behaviour) => {
-    const patched = behaviour.variants.find((variant) => text.includes(variant.marker))
+    const patched = behaviour.variants.find((variant) => markerPresent(text, variant.marker))
     if (patched !== undefined) return { behaviour, variant: patched, status: 'patched' }
     if (behaviour.nativeWhen?.(text) === true) return { behaviour, status: 'native' }
     const variant = behaviour.variants.find((candidate) =>

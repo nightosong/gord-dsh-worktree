@@ -92,6 +92,23 @@ try {
   const original = readFileSync(copy, 'utf8')
   check('the shipped shape is the unpatched bundle', !original.includes('gord-dsh-worktree: nested worktree grouping'))
 
+  // A build patched at one grouping site and not the other — the state this
+  // machine was actually in, where the workspace tree was patched and the
+  // session list was not. The list marker is a prefix of the tree marker, so a
+  // substring test called both of them patched and the missing one was never
+  // installed; the statuses have to keep them apart.
+  const halfPatched = join(work, 'half-patched.js')
+  writeFileSync(
+    halfPatched,
+    original.replace('function owningParentFolder', '// gord-dsh-worktree: nested worktree grouping (workspace tree)\n\t\tfunction owningParentFolder'),
+  )
+  const halfCheck = run(['--check', '--target', halfPatched])
+  check(
+    'a build patched at one grouping site reports the other as unpatched',
+    halfCheck.status === 2 && halfCheck.stdout.includes('original nested worktree grouping (session list)'),
+    `exit ${halfCheck.status} ${halfCheck.stdout.trim()}`,
+  )
+
   const applied = run(['--target', copy])
   check('applying succeeds', applied.status === 0, `${applied.status} ${applied.stderr.trim()}`)
   const patched = readFileSync(copy, 'utf8')
