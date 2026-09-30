@@ -373,6 +373,9 @@ const openedSessions = []
 const navigationCalls = []
 // What the panel's open action does: it must navigate, not just register.
 const jumpCalls = []
+// Workspace registration the panel performs through the client service.
+const createdWorkspaces = []
+const renamedWorkspaces = []
 /** Slot names the plugin asked to inject into, in order. */
 const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
@@ -479,9 +482,20 @@ root.plugin({
       getSnapshot: () => ({
         items: [
           { workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo', sessionIds: ['s1'], updatedAt: 5 },
+          { workspaceId: 'w4', path: '/tmp/demo/app-worktrees/feat', title: 'feat', sessionIds: [], updatedAt: 2 },
           { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other', sessionIds: [], updatedAt: 1 },
         ],
       }),
+      // The registering half of the open action goes through this service, not the
+      // host route: it is what updates the store the navigation reads.
+      create: (input) => {
+        createdWorkspaces.push(input.path)
+        return Promise.resolve({ workspaceId: input.path.includes('worktrees') ? 'w4' : 'w1', path: input.path, title: 'feat' })
+      },
+      rename: (workspaceId, title) => {
+        renamedWorkspaces.push({ workspaceId, title })
+        return Promise.resolve()
+      },
     })
     serviceCtx.provide('sidebarRightTabs', {
       register(definition) {
@@ -722,7 +736,11 @@ const openButton = findButton(await settle(props), '打开会话')
 check('rows expose the open action', openButton !== undefined)
 openButton?.props.onClick()
 const adopted = await settle(props)
-check('opening registers the directory it must navigate to', calls.some((call) => call.action === 'adopt'), JSON.stringify(calls.map((c) => c.action)))
+// Registering through the client service is what makes the second row navigable:
+// the host route leaves the store that navigation reads none the wiser.
+check('opening registers through the client workspace service', createdWorkspaces.length === 1, JSON.stringify(createdWorkspaces))
+check('and does not need the host route for it', !calls.some((call) => call.action === 'adopt'), JSON.stringify(calls.map((c) => c.action)))
+
 // Navigating is the point: a worktree whose workspace already has a session must
 // land on that session rather than on a fresh one.
 check('opening lands on the session the workspace already has', jumpCalls.includes('open:s1'), JSON.stringify(jumpCalls))
@@ -737,7 +755,14 @@ const openButtons = findAllByClass(adopted, 'gord-dsh-worktree-btn').filter((nod
 check('every row offers the one action', openButtons.length === 2, JSON.stringify(openButtons.length))
 openButtons[1]?.props.onClick()
 await settle(props)
-check('a workspace with no session starts one', jumpCalls.includes('start:w2'), JSON.stringify(jumpCalls))
+check('a workspace with no session starts one', jumpCalls.includes('start:w4'), JSON.stringify(jumpCalls))
+// The registry names a directory after itself, so a bare code has to be renamed
+// to read like the ones the composer creates.
+check(
+  'a bare workspace name is replaced by the project and code',
+  renamedWorkspaces.length === 1 && renamedWorkspaces[0].title === 'app · feat',
+  JSON.stringify(renamedWorkspaces),
+)
 
 process.stdout.write('\ninteraction: remove with confirmation\n')
 const removeButton = findButton(adopted, '删除')
