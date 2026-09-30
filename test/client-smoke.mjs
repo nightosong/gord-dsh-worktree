@@ -272,6 +272,18 @@ globalThis.document = {
 const fireDocument = (type, event) => {
   for (const handler of documentListeners.get(type) ?? []) handler(event)
 }
+// The client announces a changed worktree with a real event; the stub records
+// what it dispatched so the other mount can be checked for announcing.
+const dispatched = []
+globalThis.document.dispatchEvent = (event) => {
+  dispatched.push(event.type ?? '')
+  fireDocument(event.type, event)
+}
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type) {
+    this.type = type
+  }
+}
 
 const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 /** The browser bundle's text, kept so a naming scheme can be loaded again. */
@@ -359,6 +371,8 @@ const createdSessions = []
 const openedSessions = []
 /** Session ids the chip revealed through the workspace view, in order. */
 const navigationCalls = []
+// What the panel's open action does: it must navigate, not just register.
+const jumpCalls = []
 /** Slot names the plugin asked to inject into, in order. */
 const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
@@ -366,7 +380,7 @@ const sidebarSpecs = []
 // current session comes from `uiSession` (below). Reading `current` off this
 // snapshot is what made the settings page report an unknown session directory.
 const sessionList = {
-  byId: { s1: { id: 's1', cwd: '/tmp/demo/app', blank: true } },
+  byId: { s1: { id: 's1', cwd: '/tmp/demo/app', blank: true, updatedAt: 10 } },
 }
 root.plugin({
   name: 'test:services',
@@ -422,6 +436,10 @@ root.plugin({
     serviceCtx.provide('uiWorkspace', {
       openSession: (id) => {
         navigationCalls.push(id)
+        jumpCalls.push('open:' + id)
+      },
+      startSession: (workspaceId) => {
+        jumpCalls.push('start:' + workspaceId)
       },
     })
     serviceCtx.provide('slots', {
@@ -456,7 +474,14 @@ root.plugin({
     // session's own directory is not a repository. The plugin reads it through
     // a declared injection, so the stub has to expose the service's own shape.
     serviceCtx.provide('workspaces', {
-      getSnapshot: () => ({ items: [{ workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo' }, { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other' }] }),
+      // `w1` already owns a session and `w2` owns none: the two branches of the
+      // open action, told apart by what the workspace itself reports.
+      getSnapshot: () => ({
+        items: [
+          { workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo', sessionIds: ['s1'], updatedAt: 5 },
+          { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other', sessionIds: [], updatedAt: 1 },
+        ],
+      }),
     })
     serviceCtx.provide('sidebarRightTabs', {
       register(definition) {
@@ -522,6 +547,17 @@ let archiveMutation = { ok: true, unarchived: 1, deleted: [], skipped: [] }
 let reposUnavailable = false
 const REPO_ROW = { id: 'w1', title: 'demo', path: '/tmp/demo/app', root: '/tmp/demo/app', branch: 'main', dirty: false }
 const OTHER_REPO_ROW = { id: 'w2', title: 'other', path: '/tmp/demo/other', root: '/tmp/demo/other', branch: 'main', dirty: false }
+// One project inside a container workspace: a workspace that is not a repository
+// itself but holds several, which the picker has to name by both.
+const NESTED_REPO_ROW = {
+  id: 'w3',
+  title: 'rest-atlas',
+  path: '/tmp/demo/apifree/backend/rest-atlas',
+  root: '/tmp/demo/apifree/backend/rest-atlas',
+  branch: 'test',
+  dirty: false,
+  inside: 'apifree',
+}
 
 const calls = []
 globalThis.fetch = (url, options) => {
@@ -540,7 +576,7 @@ globalThis.fetch = (url, options) => {
           : action === 'repos'
             ? reposUnavailable
               ? { ok: false, error: 'bad-action' }
-              : { ok: true, repos: [REPO_ROW, OTHER_REPO_ROW] }
+              : { ok: true, repos: [REPO_ROW, OTHER_REPO_ROW, NESTED_REPO_ROW] }
             : action === 'list'
               ? body.dir === NON_REPO_DIR
                 ? { ok: false, error: 'not-a-repository', dir: body.dir }
@@ -560,7 +596,7 @@ globalThis.fetch = (url, options) => {
               : action === 'remove'
                 ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
                 : action === 'adopt'
-                  ? { ok: true, workspace: { workspaceId: 'w1', path: body.path, title: 'feat' } }
+                  ? { ok: true, workspace: { workspaceId: body.path.includes('worktrees') ? 'w2' : 'w1', path: body.path, title: 'feat' } }
                   : { ok: true, output: '' }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
 }
@@ -645,13 +681,63 @@ check('panel has no create form', !allText.includes('新建工作树') && findBu
 // confirmation asks nothing about it.
 check('no offer to delete a shared branch', !allText.includes('同时删除分支'), allText.slice(-300))
 
-process.stdout.write('\ninteraction: open as workspace\n')
-const openButton = findButton(tree, '用工作区打开')
-check('rows expose "open as workspace"', openButton !== undefined)
+process.stdout.write('\ninteraction: workspace picker\n')
+const pickers = findAllByClass(tree, 'gord-dsh-worktree-select')
+check('the panel offers a workspace picker', pickers.length === 1, String(pickers.length))
+check(
+  'the picker names every candidate, a container workspace by both names',
+  textsOf(pickers[0]).join(' | ') === [REPO_ROW.title, OTHER_REPO_ROW.title, 'apifree › rest-atlas'].join(' | '),
+  textsOf(pickers[0]).join(' | '),
+)
+// Choosing a workspace is the whole control: the list follows the selection, and
+// the selection starts on the project the session's own workspace resolves to.
+pickers[0]?.props.onChange({ target: { value: OTHER_REPO_ROW.path } })
+await settle(props)
+check(
+  'choosing a workspace re-lists its worktrees',
+  calls.some((call) => call.action === 'list' && call.body.dir === OTHER_REPO_ROW.path),
+  JSON.stringify(calls.map((c) => [c.action, c.body.dir])),
+)
+// Reaching for the page refreshes it: a worktree made elsewhere lands in the
+// same repository without this page's selection changing at all.
+const listCalls = () => calls.filter((call) => call.action === 'list').length
+const beforeClick = listCalls()
+pickers[0]?.props.onClick()
+await settle(props)
+check('clicking the picker re-lists, even on the selected workspace', listCalls() > beforeClick, String(listCalls() - beforeClick))
+const beforeVisible = listCalls()
+fireDocument('visibilitychange', {})
+await settle(props)
+check('coming back to the tab re-lists', listCalls() > beforeVisible, String(listCalls() - beforeVisible))
+const beforeAnnounce = listCalls()
+fireDocument('gord-worktree:changed', {})
+await settle(props)
+check('a worktree created in the chip re-lists this page', listCalls() > beforeAnnounce, String(listCalls() - beforeAnnounce))
+
+pickers[0]?.props.onChange({ target: { value: REPO_ROW.path } })
+await settle(props)
+
+process.stdout.write('\ninteraction: open session\n')
+const openButton = findButton(await settle(props), '打开会话')
+check('rows expose the open action', openButton !== undefined)
 openButton?.props.onClick()
 const adopted = await settle(props)
-check('adopt posts the host action', calls.some((call) => call.action === 'adopt'), JSON.stringify(calls.map((c) => c.action)))
-check('adopt result is reported', textsOf(adopted).join(' ').includes('已添加为工作区'), textsOf(adopted).join(' ').slice(-200))
+check('opening registers the directory it must navigate to', calls.some((call) => call.action === 'adopt'), JSON.stringify(calls.map((c) => c.action)))
+// Navigating is the point: a worktree whose workspace already has a session must
+// land on that session rather than on a fresh one.
+check('opening lands on the session the workspace already has', jumpCalls.includes('open:s1'), JSON.stringify(jumpCalls))
+// And it must not read as a registration that stopped short of navigating.
+check(
+  'an opened row does not report a registration it did not stop at',
+  !textsOf(adopted).join(' ').includes('已添加为工作区'),
+  textsOf(adopted).join(' ').slice(-200),
+)
+// The other branch: a workspace with no session of its own gets one.
+const openButtons = findAllByClass(adopted, 'gord-dsh-worktree-btn').filter((node) => textsOf(node).join('') === '打开会话')
+check('every row offers the one action', openButtons.length === 2, JSON.stringify(openButtons.length))
+openButtons[1]?.props.onClick()
+await settle(props)
+check('a workspace with no session starts one', jumpCalls.includes('start:w2'), JSON.stringify(jumpCalls))
 
 process.stdout.write('\ninteraction: remove with confirmation\n')
 const removeButton = findButton(adopted, '删除')
@@ -1568,6 +1654,9 @@ check(
 // so it has to be published from the project that was resolved. Without this
 // the new worktree turns up as a workspace of its own, which is exactly what
 // was reported.
+// The settings page can be open on the very repository this landed in, and DSH
+// tells it nothing, so the plugin has to.
+check('the chip announces the worktree it created', dispatched.includes('gord-worktree:changed'), JSON.stringify(dispatched))
 const chipParents = JSON.parse(globalThis.window.localStorage.getItem('gord-worktree:parents') ?? '{}')
 check(
   'the new worktree is published as belonging to its project',

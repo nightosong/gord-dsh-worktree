@@ -28,7 +28,7 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 
 ![A session running in a worktree, with the New Session row's working-location picker](docs/images/session-in-worktree.png)
 
-![The Worktrees settings page: repository, create form, the worktree list with its actions, and the archived-sessions card](docs/images/worktree-settings.png)
+![The Worktrees settings page: the workspace picker, the worktree list with its two-layer rows and actions, and the archived-sessions card](docs/images/worktree-settings.png)
 
 ## Install
 
@@ -165,8 +165,9 @@ from its workspace path, and the record itself carries no hidden or archived fla
 worktree therefore needs a workspace at that path — without one the shell has nowhere to draw it and
 shows *choose a workspace to start* over a session that does exist. So each worktree you start a session
 in appears in the sidebar beside the project, titled by its directory code, exactly as the core's own
-*new workspace* flow would leave it. Registering on its own is also available as the explicit
-**Open as workspace** action in Settings.
+*new workspace* flow would leave it. Settings also offers the worktree's **Open session** action, which
+registers the directory if it has to and then goes to that workspace's chat — its newest session, or a
+new one when it has none.
 
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
@@ -438,11 +439,14 @@ point at another one.
 | ----- | ------- | ------- |
 | `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Set it in this profile entry; the panel displays it but does not edit it. |
 
-The *Settings → Worktrees* page manages exactly one project, and resolves which one for you: the
-repository the active session is working in, or — when that is not a repository — the most recently
-used of your workspace repositories. It names the project it resolved, and there is nothing to type or
-pick: no path field, no repository diagnostics. Worktrees are created outside every project, so a
-checkout never appears in its own project's diffs.
+The *Settings → Worktrees* page opens on one project, and resolves which one for you: the repository
+the active session is working in, or — when that is not a repository — the most recently used of your
+workspace repositories. A picker above the list then names every project the host can read a repository
+out of — a workspace that is one, or each repository inside a container workspace, written
+`apifree › rest-atlas` — and choosing one re-lists that project's worktrees, so the page can be pointed
+anywhere without leaving it. Nothing is ever typed: no path field, no repository diagnostics, and the
+composer's own chip keeps deciding where a *new* worktree belongs. Worktrees are created outside every
+project, so a checkout never appears in its own project's diffs.
 
 ## Development
 

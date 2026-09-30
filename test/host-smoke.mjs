@@ -398,6 +398,7 @@ try {
 
   const routed = await callApi('create', { dir: repo, branch: 'worktree/route-check', base: 'main' })
   check('panel create succeeds over the route', routed.ok === true, JSON.stringify(routed))
+
   // The route adopts, and it has to: workspace membership is exact-path
   // equality, so a session rooted in the worktree needs a workspace at that
   // path. Without one the shell has nowhere to draw the session and shows
