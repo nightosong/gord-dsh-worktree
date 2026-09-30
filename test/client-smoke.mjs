@@ -501,8 +501,10 @@ const listing = {
   branches: ['main', 'origin/main', 'origin/colleague/feature'],
   localBranches: ['main'],
   worktrees: [
-    { path: '/tmp/demo/app', branch: 'main', head: 'aaaaaaa', current: true, detached: false, locked: false, pruned: false },
-    { path: '/tmp/demo/app-worktrees/feat', branch: 'worktree/feat', head: 'bbbbbbb', current: false, detached: false, locked: false, pruned: false },
+    // Both rows hold the same branch, which is the normal shape now that a copy
+    // checks out the project's branch: the copy's removal cannot delete it.
+    { path: '/tmp/demo/app', branch: 'main', head: 'aaaaaaa', current: true, detached: false, locked: false, pruned: false, branchShared: true, headTime: Date.UTC(2025, 8, 23, 6, 20) },
+    { path: '/tmp/demo/app-worktrees/feat', branch: 'main', head: 'bbbbbbb', current: false, detached: false, locked: false, pruned: false, branchShared: true, headTime: Date.UTC(2025, 8, 22, 1, 5) },
   ],
 }
 /** Payload the fake host answers the `diff` action with; probes swap it. */
@@ -603,26 +605,48 @@ check('panel asks for the projects', calls.some((call) => call.action === 'repos
 check('panel fetched the listing of the selected project', calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path), JSON.stringify(calls.map((c) => [c.action, c.body.dir])))
 check('panel renders the repository root', allText.includes('/tmp/demo/app'), allText.slice(0, 200))
 check('panel renders the repository branch', allText.includes('main'))
-check('panel lists both worktrees', allText.includes('worktree/feat') && allText.includes('共 2 个'), allText.slice(-300))
-check('panel marks the current worktree', allText.includes('当前'))
-check('panel renders the default parent', allText.includes('/tmp/demo/app-worktrees'))
-check('panel renders the create form toggle', findButton(tree, '新建') !== undefined || findButton(tree, '创建') !== undefined)
-
-process.stdout.write('\ninteraction: create\n')
-const toggle = findButton(tree, '+ 创建') ?? findButton(tree, '新建工作树')
-check('create section exposes a toggle', toggle !== undefined)
-toggle?.props.onClick()
-const opened = await settle(props)
-// The form is recognised by its own fields, not by the repository field: the
-// panel has no path field any more, so that used to pass for the wrong reason.
+// Both rows hold the project branch now, so the row is told apart by its path.
+check('panel lists both worktrees', allText.includes('/tmp/demo/app-worktrees/feat') && allText.includes('共 2 个'), allText.slice(-300))
+// git ranks no checkout above another, so no row is labelled as the project, the
+// main one, or the current one: the rows differ by path, project and branch.
 check(
-  'form opens',
-  textsOf(opened).join(' | ').includes('分支名') && findButton(opened, '创建') !== undefined,
-  textsOf(opened).join(' | ').slice(-200),
+  'no row is labelled as the project or the current checkout',
+  !allText.includes('项目本体') && !allText.includes('当前') && !allText.includes('主目录'),
+  allText.slice(0, 200),
 )
+// Layer two: `project · branch` on the left, the time it last moved on the right.
+check('the second layer names the project and the branch', allText.includes('app | · | main'), allText.slice(0, 240))
+check('the second layer ends with a timestamp', /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(allText), allText.slice(0, 240))
+// Layer one never wraps: a long path loses its front, not its identity.
+const pathLine = (function find(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (textsOf(node).includes('/tmp/demo/app') && node.props?.style?.textOverflow === 'ellipsis') return node
+  return find(node.children)
+})(tree)
+check(
+  'a long path is elided at the front and never wraps',
+  pathLine !== undefined && pathLine.props.style.whiteSpace === 'nowrap' && pathLine.props.style.direction === 'rtl',
+  JSON.stringify(pathLine === undefined ? null : pathLine.props.style),
+)
+check('panel renders the default parent', allText.includes('/tmp/demo/app-worktrees'))
+// The page is a list and nothing else: the project header with its refresh and
+// the create form are gone, because a worktree is made from the composer's chip,
+// where the workspace it belongs to is known.
+check('panel has no project header', !allText.includes('刷新'), allText.slice(0, 200))
+check('panel has no create form', !allText.includes('新建工作树') && findButton(tree, '+ 创建') === undefined)
+// A branch the project also holds does not die with the copy, so the copy's
+// confirmation asks nothing about it.
+check('no offer to delete a shared branch', !allText.includes('同时删除分支'), allText.slice(-300))
 
 process.stdout.write('\ninteraction: open as workspace\n')
-const openButton = findButton(opened, '用工作区打开')
+const openButton = findButton(tree, '用工作区打开')
 check('rows expose "open as workspace"', openButton !== undefined)
 openButton?.props.onClick()
 const adopted = await settle(props)
@@ -631,10 +655,33 @@ check('adopt result is reported', textsOf(adopted).join(' ').includes('已添加
 
 process.stdout.write('\ninteraction: remove with confirmation\n')
 const removeButton = findButton(adopted, '删除')
+check(
+  'the project checkout offers no remove button',
+  findAllByClass(adopted, 'gord-dsh-worktree-btn').filter((node) => textsOf(node).join('') === '删除').length === 1,
+  JSON.stringify(findAllByClass(adopted, 'gord-dsh-worktree-btn').map((node) => textsOf(node).join(''))),
+)
 check('rows expose remove', removeButton !== undefined)
 removeButton?.props.onClick()
 const confirming = await settle(props)
 check('remove asks for confirmation first', textsOf(confirming).join(' ').includes('确认删除'), textsOf(confirming).join(' ').slice(-200))
+const confirmRow = (function find(node) {
+  if (node === null || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (node.props?.style?.justifyContent === 'flex-end') return node
+  return find(node.children)
+})(confirming)
+const confirmLabels = confirmRow === undefined ? [] : textsOf(confirmRow)
+check(
+  'the confirmation buttons sit on the right, cancel first',
+  confirmRow !== undefined && confirmLabels[0] === '取消' && confirmLabels[1] === '删除',
+  JSON.stringify(confirmLabels),
+)
 check('remove is not called before confirmation', !calls.some((call) => call.action === 'remove'))
 const confirmRemove = findButton(confirming, '取消') !== undefined ? findButton(confirming, '删除') : undefined
 const submit = confirming.children.flatMap((child) => findButton(child, '删除') ?? []).filter((node) => node !== removeButton)[0]
@@ -673,7 +720,7 @@ check(
   calls.some((call) => call.action === 'list' && call.body.dir === REPO_ROW.path),
   JSON.stringify(calls.map((call) => [call.action, call.body.dir])),
 )
-check('the listing renders for it', outsideText.includes('worktree/feat'), outsideText.slice(0, 300))
+check('the listing renders for it', outsideText.includes('/tmp/demo/app-worktrees/feat'), outsideText.slice(0, 300))
 check('no session-directory refusal is shown', !outsideText.includes('不是 git 仓库') && !outsideText.includes('当前会话目录'), outsideText.slice(0, 300))
 // The same resolution has to work against a host that does not answer `repos` —
 // an older host, or a profile without the workspace controller. Then the client

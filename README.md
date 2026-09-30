@@ -125,7 +125,9 @@ picker in the same row, or from the session itself — and that workspace's repo
 inside it when the workspace is a container of projects (`apifree` holds `backend/rest-atlas` and
 `backend/oms-atlas`; `x-gordon` holds four more). Only when none of that is readable does it fall back
 to the most recently used repository workspace. The control names the project it will use, so nothing is decided invisibly, and the new
-worktree is cut from that project's current branch. The checkout itself always lands in
+worktree is a second checkout of that project's current branch — the branch the project itself is on,
+upstream and all, rather than a generated name of its own, so parallel copies of one project work on
+the same line of work and the one row that is the project is marked as such. It always lands in
 `$DSH_HOME/worktree/`, outside every project: a worktree inside its own repository shows up in that
 project's `git status` and diffs, which is what that location exists to avoid. A requested path inside
 the project is refused rather than quietly relocated.

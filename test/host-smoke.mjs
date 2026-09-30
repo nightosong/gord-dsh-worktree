@@ -146,6 +146,17 @@ try {
   const described2 = await service.listWorktrees(repo)
   check('list reports three worktrees', described2.worktrees.length === 3, String(described2.worktrees.length))
   check('list offers branches', Array.isArray(described2.branches) && described2.branches.includes('main'), JSON.stringify(described2.branches))
+  // Rows carry when each checkout last moved, which is what the list's second
+  // layer puts on the right: the project and its copies share the branch, so the
+  // time is the only thing that tells their state apart.
+  const headCommit = Number(git(repo, 'log', '-1', '--format=%ct')) * 1000
+  const mainRow = described2.worktrees.find((entry) => entry.path === repo)
+  check(
+    'rows report when the checkout last moved',
+    mainRow !== undefined && mainRow.headTime === headCommit,
+    JSON.stringify(described2.worktrees.map((entry) => [entry.path, entry.headTime])),
+  )
+
   const current = described2.worktrees.filter((entry) => entry.current)
   check('exactly one worktree is flagged current', current.length === 1 && current[0].path === repo, JSON.stringify(current.map((e) => e.path)))
 
@@ -505,6 +516,39 @@ try {
 
   const plain = await service.createWorktree({ dir: freshClone('plain'), branch: 'feat/mine', base: 'main', path: join(scratch, 'wt-plain') })
   check('a normal new branch reports no remote noise', plain.pickedUpRemote === undefined && plain.shadowedRemote === undefined)
+
+  // Naming no branch is what the composer's chip does, and it means a copy of
+  // what the project is on — the branch it has checked out, upstream and all —
+  // not a new line of work under a generated name. A fresh clone is on `main`
+  // tracking `origin/main`, so that is the shape being checked.
+  const copyRepo = freshClone('copy')
+  const copy = await service.createWorktree({ dir: copyRepo, path: join(scratch, 'wt-copy') })
+  check(
+    'a worktree made with no branch checks out the project branch',
+    copy.ok === true && copy.branch === 'main' && copy.createdBranch === false,
+    JSON.stringify(copy),
+  )
+  check(
+    'the copy holds the branch, upstream included',
+    git(copy.path, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') === 'origin/main',
+    git(copy.path, 'rev-parse', '--abbrev-ref', 'HEAD'),
+  )
+  const copyList = await service.listWorktrees(copyRepo)
+  check(
+    'rows say when one branch is held by more than one checkout',
+    copyList.worktrees.filter((entry) => entry.branchShared === true).length === 2,
+    JSON.stringify(copyList.worktrees.map((entry) => [entry.branch, entry.branchShared])),
+  )
+  const copyOut = await service.removeWorktree({ dir: copyRepo, path: copy.path, force: true, deleteBranch: true })
+  check(
+    'removing a copy never deletes the branch it shares',
+    copyOut.ok === true && copyOut.branchDeleted === false && copyOut.branchShared === true,
+    JSON.stringify(copyOut),
+  )
+  check(
+    'the project keeps its branch',
+    git(copyRepo, 'rev-parse', '--abbrev-ref', 'HEAD') === 'main' && git(copyRepo, 'branch', '--list', 'main').includes('main'),
+  )
 
   const branchesList = await service.listWorktrees(freshClone('branches'))
   check('list exposes remote-tracking branches', branchesList.branches.includes('origin/colleague/feature'), JSON.stringify(branchesList.branches))
