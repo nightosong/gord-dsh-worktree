@@ -272,8 +272,6 @@ reports.
 A worktree is an ordinary repository to it. The tab asks the host about the directory the session
 runs in, so a session that moves into a worktree follows along without the tab being told it did.
 
-![The Changes tab: six changed files with statuses and counts, and the selected file's patch](images/sidebar-changes-tab.png)
-
 It is registered through the same `sidebarRightTabs` registry the built-in file tree and document
 preview use, and both of its slots — the body and the tab title — are injected from a child scope, so
 a profile composed without the right sidebar loses the tab instead of failing to apply the plugin.
