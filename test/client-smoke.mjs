@@ -664,8 +664,41 @@ check(
   !allText.includes('项目本体') && !allText.includes('当前') && !allText.includes('主目录'),
   allText.slice(0, 200),
 )
-// Layer two: `project · branch` on the left, the time it last moved on the right.
-check('the second layer names the project and the branch', allText.includes('app | · | main'), allText.slice(0, 240))
+// Layer two: the branch on the left, the time it last moved on the right. The
+// project is not repeated here — the page already names the one it is listing,
+// and on a narrow panel that prefix is what broke the layer into four lines.
+const worktreeRows = findAllByClass(tree, 'gord-dsh-worktree-item')
+const worktreeRowText = textsOf(worktreeRows[0]).join(' | ')
+check(
+  'the second layer does not repeat the project',
+  !worktreeRowText.includes('| · |') && !worktreeRowText.includes('| app |'),
+  worktreeRowText,
+)
+check('the second layer still names the branch', worktreeRowText.includes('main'), worktreeRowText)
+// A long branch is elided rather than wrapped, so the layer stays one line: the
+// branch is what can be long, and a branch is read from its front.
+const branchLine = (function find(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (textsOf(node).includes('main') && node.props?.style?.textOverflow === 'ellipsis') return node
+  return find(node.children)
+})(tree)
+check(
+  'a long branch is elided and never wraps',
+  branchLine !== undefined && branchLine.props.style.whiteSpace === 'nowrap' && branchLine.props.style.overflow === 'hidden',
+  JSON.stringify(branchLine === undefined ? null : branchLine.props.style),
+)
+check(
+  'the branch layer itself does not wrap',
+  stylesOf(tree).some((style) => style.flexWrap === 'nowrap' && style.lineHeight === '18px'),
+  JSON.stringify(stylesOf(tree).filter((style) => style.flexWrap !== undefined)),
+)
 check('the second layer ends with a timestamp', /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(allText), allText.slice(0, 240))
 // Layer one never wraps: a long path loses its front, not its identity.
 const pathLine = (function find(node) {
