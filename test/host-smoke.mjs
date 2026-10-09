@@ -11,14 +11,14 @@ import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { zstdCompressSync } from 'node:zlib'
 import { basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import * as archive from '../lib/archive.js'
 import * as service from '../lib/service.js'
-import { canonicalSpelling, defaultWorktreeParent, parseWorktreeList, slugifyBranch, worktreeCode, worktreeList } from '../lib/worktree.js'
+import { canonicalSpelling, defaultWorktreeParent, ensureWorktreeExclude, parseWorktreeList, slugifyBranch, worktreeCode, worktreeList, worktreePathsInText } from '../lib/worktree.js'
 
 let failures = 0
 let checks = 0
@@ -69,10 +69,12 @@ try {
   git(repo, 'commit', '-m', 'init')
 
   process.stdout.write('\npure helpers\n')
-  // Worktrees live outside every repository: no ignore rule to add and forget,
-  // and nothing extra for a build or search to walk.
-  check('default parent is the harness home', defaultWorktreeParent() === join(dshHomePath('worktree')), defaultWorktreeParent())
-  check('default parent is outside the repository', !defaultWorktreeParent().startsWith(process.cwd()), defaultWorktreeParent())
+  // Worktrees live inside their own project, in a directory the repository's
+  // local exclude keeps out of `git status`: both sidebar generations nest a
+  // workspace under the workspace directory containing it, so this is what makes
+  // a worktree appear under its project instead of at the top level.
+  check('default parent is inside the project', defaultWorktreeParent(repo) === join(repo, '.dsh', 'worktrees'), defaultWorktreeParent(repo))
+  check('default parent follows the project', defaultWorktreeParent(scratch) === join(scratch, '.dsh', 'worktrees'), defaultWorktreeParent(scratch))
   check('worktree codes are eight hex characters', /^[0-9a-f]{8}$/.test(worktreeCode()), worktreeCode())
   check('worktree codes do not repeat', worktreeCode() !== worktreeCode())
   // Regression: a path that does not exist has no canonical form of its own, so
@@ -90,7 +92,14 @@ try {
     `${canonicalSpelling('/tmp/gord-absent')} vs ${canonicalSpelling('/private/tmp/gord-absent')}`,
   )
   check('slugifyBranch flattens slashes', slugifyBranch('worktree/feature/x') === 'worktree-feature-x', slugifyBranch('worktree/feature/x'))
-  check('the default parent ignores the repository', defaultWorktreeParent() === join(scratch, 'worktree'), defaultWorktreeParent())
+  // Old logs name the former `$DSH_HOME/worktree`, new ones the project's own
+  // directory: the recognizer matches both by shape, and only the shape.
+  const logText = 'cd /w/app/.dsh/worktrees/aaaa1111 && ls\ncd /Users/me/.dsh/worktree/bbbb2222\ncd /tmp/elsewhere/cccc3333'
+  check(
+    'worktreePathsInText reads both locations and nothing else',
+    JSON.stringify(worktreePathsInText(logText)) === JSON.stringify(['/w/app/.dsh/worktrees/aaaa1111', '/Users/me/.dsh/worktree/bbbb2222']),
+    JSON.stringify(worktreePathsInText(logText)),
+  )
   const parsed = parseWorktreeList(git(repo, 'worktree', 'list', '--porcelain'))
   check('parseWorktreeList reads the main worktree', parsed.length === 1 && parsed[0].branch === 'main', JSON.stringify(parsed))
 
@@ -119,16 +128,28 @@ try {
   check('create reports a new branch', created.createdBranch === true)
   check(
     'create used the default parent and named the directory by its code',
-    dirname(created.path) === join(scratch, 'worktree') && /^[0-9a-f]{8}$/.test(basename(created.path)),
+    dirname(created.path) === join(repo, '.dsh', 'worktrees') && /^[0-9a-f]{8}$/.test(basename(created.path)),
     created.path,
+  )
+  check('create reports the directory as excluded', created.excluded === true, String(created.excluded))
+  check('an in-project worktree leaves git status clean', git(repo, 'status', '--porcelain') === '', git(repo, 'status', '--porcelain'))
+  const excludePath = git(repo, 'rev-parse', '--git-path', 'info/exclude').trim()
+  const excludeText = readFileSync(join(repo, excludePath), 'utf8')
+  check('the project excludes its worktree directory locally', excludeText.split('\n').includes('/.dsh/worktrees/'), JSON.stringify(excludeText))
+  await ensureWorktreeExclude(repo)
+  check(
+    'excluding twice writes the line once',
+    readFileSync(join(repo, excludePath), 'utf8').split('/.dsh/worktrees/').length === 2,
+    JSON.stringify(readFileSync(join(repo, excludePath), 'utf8')),
   )
   check('create checked out the branch', created.branch === 'worktree/feature-a', created.branch)
   check('main worktree is untouched', git(repo, 'rev-parse', '--abbrev-ref', 'HEAD') === 'main')
 
   // A named path is honoured, but never inside the project the worktree belongs
-  // to: such a checkout shows up in that project's own `git status` and diffs —
-  // which is exactly what putting them under `$DSH_HOME/worktree` avoids. A
-  // relative path resolves against the repository, so it is always refused.
+  // to: such a checkout would show up in that project's own `git status` and
+  // diffs. The one exception is the plugin's own directory above, which the
+  // project excludes locally. A relative path resolves against the repository,
+  // so it is always refused.
   const insideRepo = await service.createWorktree({ dir: repo, branch: 'worktree/feature-b', base: 'main', path: 'app-worktrees/custom-dir' })
   check('create refuses a path inside the repository', insideRepo.ok === false && insideRepo.error === 'inside-repository', JSON.stringify(insideRepo))
 
@@ -179,6 +200,20 @@ try {
   const dirtyStatus = await service.worktreeStatus(created.path)
   check('status sees an untracked file', dirtyStatus.dirty === true && dirtyStatus.changes.length === 1, JSON.stringify(dirtyStatus.changes))
 
+  // Per-row dirtiness is what the panel's removal dialog keys on, and it is
+  // asked for rather than always paid for: one `git status` per worktree.
+  const asked = await service.listWorktrees(repo, undefined, { dirty: true })
+  const askedRow = asked.worktrees.find((entry) => entry.path === created.path)
+  const askedMain = asked.worktrees.find((entry) => entry.path === repo)
+  check('a dirty row is reported dirty when asked', askedRow?.dirty === true, JSON.stringify(asked.worktrees.map((entry) => [entry.path, entry.dirty])))
+  check('a clean row is reported clean when asked', askedMain?.dirty === false, JSON.stringify(askedMain))
+  const unasked = await service.listWorktrees(repo)
+  check(
+    'the plain list pays for no per-row status',
+    unasked.worktrees.every((entry) => entry.dirty === undefined),
+    JSON.stringify(unasked.worktrees.map((entry) => [entry.path, entry.dirty])),
+  )
+
   process.stdout.write('\nremove guards\n')
   const blocked = await service.removeWorktree({ dir: repo, path: created.path })
   check('remove refuses a dirty worktree', blocked.ok === false && blocked.error === 'dirty', JSON.stringify(blocked))
@@ -224,6 +259,155 @@ try {
   const finalList = await service.listWorktrees(repo)
   check('list still shows the stale record', finalList.worktrees.some((entry) => entry.branch === 'worktree/stale'), JSON.stringify(finalList.worktrees.map((e) => e.branch)))
 
+  // Worktrees an earlier release parked in the shared `$DSH_HOME/worktree` can
+  // still be folded under their project: moving them in is what the sidebar's
+  // containment rule needs, and the symlink left behind is what keeps a session
+  // made at the old path attached to its worktree.
+  process.stdout.write('\nrelocate into the project\n')
+  const legacyParent = join(scratch, 'worktree')
+  const legacyA = await service.createWorktree({ dir: repo, branch: 'worktree/legacy-a', base: 'main', path: join(legacyParent, 'aaaa0001') })
+  const legacyB = await service.createWorktree({ dir: repo, branch: 'worktree/legacy-b', base: 'main', path: join(legacyParent, 'aaaa0002') })
+  check('two worktrees start outside the project', legacyA.ok === true && legacyB.ok === true, JSON.stringify([legacyA.path, legacyB.path]))
+  // A checkout the user made elsewhere is not the plugin's to move, and a record
+  // whose directory is gone can only be reported: both are skipped by name.
+  const handmade = await service.createWorktree({ dir: repo, branch: 'worktree/handmade', base: 'main', path: join(scratch, 'handmade') })
+  const goneLegacy = await service.createWorktree({ dir: repo, branch: 'worktree/gone', base: 'main', path: join(legacyParent, 'aaaa0003') })
+  rmSync(goneLegacy.path, { recursive: true, force: true })
+  const relocated = await service.relocateWorktrees({ dir: repo })
+  check(
+    'relocate moves every legacy worktree into the project',
+    relocated.ok === true &&
+      relocated.moved.length === 2 &&
+      relocated.moved.every((row) => dirname(row.to) === join(repo, '.dsh', 'worktrees')),
+    JSON.stringify(relocated),
+  )
+  check(
+    'a checkout the user made elsewhere is left alone',
+    relocated.skipped.some((row) => row.path === handmade.path && row.reason === 'elsewhere') &&
+      existsSync(handmade.path) &&
+      !lstatSync(handmade.path).isSymbolicLink(),
+    JSON.stringify(relocated.skipped),
+  )
+  check(
+    'a legacy record whose directory is gone is only reported',
+    relocated.skipped.some((row) => row.path === goneLegacy.path && row.reason === 'missing'),
+    JSON.stringify(relocated.skipped),
+  )
+  check(
+    'relocate leaves a symlink at each old path',
+    relocated.moved.every((row) => lstatSync(row.from).isSymbolicLink() && readlinkSync(row.from) === row.to),
+    JSON.stringify(relocated.moved),
+  )
+  check(
+    'the old path still resolves to the moved checkout',
+    relocated.moved.every((row) => existsSync(join(row.from, '.git'))),
+    JSON.stringify(relocated.moved),
+  )
+  const afterMove = git(repo, 'worktree', 'list', '--porcelain')
+  check('git records the new paths', relocated.moved.every((row) => afterMove.includes(`worktree ${row.to}`)), afterMove)
+  check('the project stays clean after the move', git(repo, 'status', '--porcelain') === '', git(repo, 'status', '--porcelain'))
+  const relocatedAgain = await service.relocateWorktrees({ dir: repo })
+  check(
+    'relocating again moves nothing',
+    relocatedAgain.moved.length === 0 && relocatedAgain.skipped.some((row) => row.reason === 'already-inside'),
+    JSON.stringify(relocatedAgain.skipped.map((row) => row.reason)),
+  )
+  check('a non-repository is refused', (await service.relocateWorktrees({ dir: tmpdir() })).error === service.NOT_A_REPO)
+
+  // The workspace registry has no path update — a workspace is its directory —
+  // so the moved worktree's group is handed over: a record at the new path takes
+  // the old record's title and sessions, and the old record is retired.
+  process.stdout.write('\nworkspace hand-over\n')
+  const handover = await import('../lib/index.js')
+  const attached = []
+  const retired = []
+  const handoverRegistry = {
+    list: () => [{ id: 'w-old', title: 'app · aaaa0001', path: relocated.moved[0].from, sessionIds: ['s-1', 's-2'] }],
+    create: (path, title) =>
+      Promise.resolve({ id: 'w-new', path: path, title: title, attachSession: (id) => { attached.push(id); return Promise.resolve() } }),
+    delete: (id) => { retired.push(id); return Promise.resolve() },
+  }
+  const handed = await handover.repointWorkspaces(handoverRegistry, [relocated.moved[0]])
+  check(
+    'the workspace of a moved worktree follows it',
+    handed[0].workspaceId === 'w-new' && handed[0].sessions === 2 && handed[0].retired === true && attached.join() === 's-1,s-2',
+    JSON.stringify([handed, attached]),
+  )
+  check('the old workspace record is retired', retired.join() === 'w-old', JSON.stringify(retired))
+  // A run that moved the checkout but could not hand the workspace over leaves a
+  // record at the old path; the old path is a symlink by then, so running the
+  // relocation again finishes it. A record whose directory is gone cannot.
+  const reparsed = handover.unfinishedRelocations([{ id: 'w-1', path: legacyA.path }], repo)
+  check(
+    'a record left at the old path is finished by running it again',
+    reparsed.length === 1 &&
+      reparsed[0].from === legacyA.path &&
+      reparsed[0].to === canonicalSpelling(legacyA.path) &&
+      reparsed[0].to.startsWith(join(repo, '.dsh', 'worktrees')),
+    JSON.stringify(reparsed),
+  )
+  check(
+    'a record whose directory is gone is left alone',
+    handover.unfinishedRelocations([{ id: 'w-2', path: goneLegacy.path }], repo).length === 0,
+    JSON.stringify(handover.unfinishedRelocations([{ id: 'w-2', path: goneLegacy.path }], repo)),
+  )
+  // A worktree is a workspace of its own, so a tree draws a folder line for it.
+  // The browser hides that line and lets its sessions render a level up, which is
+  // why these are the child rows and only the ones a live session lives in.
+  const rowIds = handover.worktreeRowIds.bind(handover)
+  check(
+    'a worktree a session lives in is a row to hide',
+    rowIds([
+      { id: 'w-project', path: '/apps/app', sessionIds: ['s-0'] },
+      { id: 'w-worktree', path: '/apps/app/.dsh/worktrees/aaaa0001', sessionIds: ['s-1'] },
+    ]).join() === 'w-worktree',
+  )
+  check(
+    'the project it belongs to is not',
+    !rowIds([
+      { id: 'w-project', path: '/apps/app', sessionIds: ['s-0'] },
+      { id: 'w-worktree', path: '/apps/app/.dsh/worktrees/aaaa0001', sessionIds: ['s-1'] },
+    ]).includes('w-project'),
+  )
+  check(
+    'a worktree whose only sessions are archived keeps its row',
+    rowIds(
+      [{ id: 'w-worktree', path: '/apps/app/.dsh/worktrees/aaaa0001', sessionIds: ['s-1', 's-2'] }],
+      ['s-1', 's-2'],
+    ).length === 0,
+  )
+  check(
+    'a session names the workspace it runs in',
+    handover.workspaceTitleOf(
+      [
+        { id: 'w-project', title: 'skyrouter', path: '/apps/skyrouter', sessionIds: ['s-1'] },
+        { id: 'w-worktree', title: 'skyrouter · ed466e1a', path: '/apps/skyrouter/.dsh/worktrees/ed466e1a', sessionIds: ['s-2'] },
+      ],
+      's-2',
+    ) === 'skyrouter · ed466e1a',
+  )
+  check(
+    'a session in the project itself names the project',
+    handover.workspaceTitleOf([{ id: 'w-project', title: 'skyrouter', sessionIds: ['s-1'] }], 's-1') === 'skyrouter',
+  )
+  check(
+    'a session no workspace claims names nothing',
+    handover.workspaceTitleOf([{ id: 'w-project', title: 'skyrouter', sessionIds: ['s-1'] }], 's-9') === '',
+  )
+  check(
+    'a directory that is merely inside another does not make a worktree row',
+    rowIds([
+      { id: 'w-project', path: '/apps/app', sessionIds: [] },
+      { id: 'w-child', path: '/apps/app/x-bot', sessionIds: ['s-1'] },
+    ]).length === 0,
+  )
+  check(
+    'a record already inside the project is left alone',
+    handover.unfinishedRelocations([{ id: 'w-3', path: join(repo, '.dsh', 'worktrees', 'aaaa0001') }], repo).length === 0,
+  )
+  const withoutRegistry = await handover.repointWorkspaces(undefined, [{ from: legacyA.path, to: legacyB.path }])
+  check('a profile without a workspace registry is left alone', withoutRegistry.length === 0, JSON.stringify(withoutRegistry))
+
   process.stdout.write('\nformatWorktrees\n')
   check(
     'formatWorktrees renders one row per worktree',
@@ -252,9 +436,9 @@ try {
   }
   plugin.apply(stubCtx, { defaultParent: '' })
 
-  // Installing the plugin cannot install its browser-bundle patches — pnpm runs
-  // no lifecycle script for a `link:` package — so load does it. The states are
-  // what the settings page and the log report, so they are pinned here.
+  // Installing the plugin cannot install its browser-bundle patch — pnpm runs no
+  // lifecycle script for a `link:` package — so load does it. The states are what
+  // the log and the health route report, so they are pinned here.
   const patchLog = []
   const patchStates = plugin.ensureBundlePatches(
     { info: (message) => patchLog.push(['info', message]), warn: (message) => patchLog.push(['warn', message]) },
@@ -264,13 +448,37 @@ try {
   )
   check(
     'a missing bundle patch is installed at load and reported',
-    patchStates[0].state === 'patched' && patchStates[1].state === 'ready',
+    patchStates.length === 1 && patchStates[0].tool === 'patch-sidebar.mjs' && patchStates[0].state === 'patched',
     JSON.stringify(patchStates),
+  )
+  check(
+    'the concurrency patch stays the manual step it is documented as',
+    !patchStates.some((row) => row.tool === 'patch-concurrency.mjs'),
+    JSON.stringify(patchStates),
+  )
+  const readyStates = plugin.ensureBundlePatches({}, () => ({ status: 0, stdout: '', stderr: '' }))
+  check(
+    'an installed patch is reported ready rather than patched again',
+    readyStates.length === 1 && readyStates[0].state === 'ready',
+    JSON.stringify(readyStates),
   )
   check(
     'installing it says a restart is needed',
     patchLog.some(([, message]) => message.includes('重启')),
     JSON.stringify(patchLog),
+  )
+  const desktopLog = []
+  const desktopStates = plugin.ensureBundlePatches(
+    { warn: (message) => desktopLog.push(message) },
+    () => {
+      throw new Error('a desktop host must never be patched')
+    },
+    { desktop: true },
+  )
+  check(
+    'a desktop host is reported instead of silently patched',
+    desktopStates.every((row) => row.state === 'desktop') && desktopLog.some((message) => message.includes('签名包')),
+    JSON.stringify([desktopStates, desktopLog]),
   )
   const unknownLog = []
   const unknownStates = plugin.ensureBundlePatches(
@@ -282,8 +490,8 @@ try {
     unknownStates.every((row) => row.state === 'unknown') && unknownLog.every((message) => message.includes('需要更新插件')),
     JSON.stringify([unknownStates, unknownLog]),
   )
-  const expected = ['worktree_list', 'worktree_create', 'worktree_status', 'worktree_remove', 'worktree_prune']
-  check('all five tools register', expected.every((name) => registered.has(name)), [...registered.keys()].join(', '))
+  const expected = ['worktree_list', 'worktree_create', 'worktree_status', 'worktree_remove', 'worktree_prune', 'worktree_relocate']
+  check('all six tools register', expected.every((name) => registered.has(name)), [...registered.keys()].join(', '))
   check('no unexpected tool names', registered.size === expected.length, String(registered.size))
 
   // The tool resolves the repository from the session cwd, exactly as the bash
@@ -434,7 +642,7 @@ try {
   check('the tool path adopts nothing', adopted.length === 1, JSON.stringify(adopted))
   check(
     'panel create reports the path it made',
-    dirname(routed.path) === join(scratch, 'worktree') && /^[0-9a-f]{8}$/.test(basename(routed.path)),
+    dirname(routed.path) === defaultWorktreeParent(repo) && /^[0-9a-f]{8}$/.test(basename(routed.path)),
     routed.path,
   )
 
@@ -653,16 +861,16 @@ try {
   let fromProfile
   try {
     const profileTools = applyWithSettings({ configure: () => () => {}, describe: () => [] })
-    check('tools register without a settings namespace too', profileTools.size === 5, String(profileTools.size))
+    check('tools register without a settings namespace too', profileTools.size === 6, String(profileTools.size))
     fromProfile = await profileTools.get('worktree_create').execute({ branch: 'worktree/profile-parent' }, exec)
   } catch (error) {
     profileError = error
   }
   check('a build with no settings namespace is not an error', profileError === undefined, String(profileError))
   check(
-    'and the default parent falls back to the harness home',
-    fromProfile !== undefined && dirname(fromProfile.path) === defaultWorktreeParent(),
-    JSON.stringify({ path: fromProfile?.path, parent: defaultWorktreeParent() }),
+    'and the default parent falls back to the project itself',
+    fromProfile !== undefined && dirname(fromProfile.path) === defaultWorktreeParent(repo),
+    JSON.stringify({ path: fromProfile?.path, parent: fromProfile === undefined ? '' : defaultWorktreeParent(repo) }),
   )
 
   // The Changes tab answers with the working tree against HEAD, so these probes

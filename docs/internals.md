@@ -9,7 +9,8 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 ## Features
 
 1. **Create worktrees** — an isolated checkout and branch in one atomic command, from the agent
-   (`worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`) or from
+   (`worktree_list`, `worktree_create`, `worktree_status`, `worktree_remove`, `worktree_prune`,
+   `worktree_relocate`) or from
    *Settings → Worktrees*.
 2. **Start a session in a worktree** — the New Session row carries a working-location picker: stay in the
    current worktree, or create a fresh one and open the session inside it.
@@ -126,11 +127,12 @@ inside it when the workspace is a container of projects (`apifree` holds `backen
 to the most recently used repository workspace. The control names the project it will use, so nothing is decided invisibly, and the new
 worktree is a second checkout of that project's current branch — the branch the project itself is on,
 upstream and all, rather than a generated name of its own, so parallel copies of one project work on
-the same line of work and the one row that is the project is marked as such. It always lands in
-`$DSH_HOME/worktree/`, under a short random code rather than the branch name — one branch can be checked out in
-several worktrees, so a branch-named directory could not stay unique — and outside every project: a worktree inside its own repository shows up in that
-project's `git status` and diffs, which is what that location exists to avoid. A requested path inside
-the project is refused rather than quietly relocated.
+the same line of work and the one row that is the project is marked as such. It always lands inside
+the project, in `.dsh/worktrees/`, under a short random code rather than the branch name — one branch can be
+checked out in several worktrees, so a branch-named directory could not stay unique. Really living inside the
+project is what lets the desktop's workspace tree nest it under that project, while the directory is added to
+the repository's local `git/info/exclude` so it never shows up in the project's own `git status` or diffs. A
+requested path elsewhere inside the project is refused rather than quietly relocated.
 
 **It has to happen on the click, not on the first message.** A session's directory is fixed when the
 session is created, and the blank session in the composer is created before anything is typed, so there
@@ -198,8 +200,8 @@ rather than from a version number — patching only the part that build is missi
 project whichever one the sidebar is set to. The script never writes the user's view options.
 
 Two rules decide the parent: a workspace whose directory is inside another's, and a parent map this
-plugin publishes for worktrees kept outside the project — which is the default,
-`$DSH_HOME/worktree/<code>`. From 0.1.6 that second rule lives in `owningParentFolder`, the single
+plugin publishes for worktrees kept outside the project — which was the default
+before worktrees moved inside it, and still covers the ones not moved yet (`$DSH_HOME/worktree/<code>`). From 0.1.6 that second rule lives in `owningParentFolder`, the single
 source of the tree's parent map and its only call site; on 0.1.5 it lives in `groupByWorkspace`. The map
 is read from `localStorage`, because the first render after a reload already needs the answer and a fetch
 would land too late. Entries naming a path that is gone, the child itself, a directory inside it, or a
@@ -417,8 +419,9 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 | `worktree_status` | One worktree's branch, upstream line, and changed files. |
 | `worktree_remove` | Removes a worktree. Refuses when it holds uncommitted or untracked changes; `force` discards them on purpose. |
 | `worktree_prune` | Drops records of worktrees whose directories are gone. Deletes no files. |
+| `worktree_relocate` | Moves worktrees left in `$DSH_HOME/worktree` into their project, leaving a symlink at each old path and handing the sidebar workspace over to the new path. |
 
-All five resolve the repository from the session directory by default and accept `workdir` (or `repo`) to
+All six resolve the repository from the session directory by default and accept `workdir` (or `repo`) to
 point at another one.
 
 ## Safety rules
@@ -443,7 +446,7 @@ point at another one.
 
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
-| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `$DSH_HOME/worktree/`. Set it in this profile entry; the panel displays it but does not edit it. |
+| `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `.dsh/worktrees/` inside the project. Set it in this profile entry; the panel displays it but does not edit it. |
 
 The *Settings → Worktrees* page opens on one project, and resolves which one for you: the repository
 the active session is working in, or — when that is not a repository — the most recently used of your

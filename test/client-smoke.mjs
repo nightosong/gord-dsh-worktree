@@ -167,6 +167,43 @@ function findButton(node, label) {
   return undefined
 }
 
+/** The checkbox of the label element that renders `text`. */
+function findCheckbox(node, text) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findCheckbox(child, text)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  const inputs = node.children.filter((child) => child && typeof child === 'object' && child.type === 'input' && child.props?.type === 'checkbox')
+  if (inputs.length > 0 && textsOf(node).join('').includes(text)) return inputs[0]
+  for (const child of node.children) {
+    const hit = findCheckbox(child, text)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
+/** The first node in a rendered tree whose props carry `key`. */
+function findNode(node, key) {
+  if (node === null || node === undefined || typeof node !== 'object') return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findNode(child, key)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  if (node.props !== undefined && node.props[key] !== undefined) return node
+  for (const child of node.children) {
+    const hit = findNode(child, key)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
 /** Every option row in a rendered menu, in document order. */
 function findOptions(node) {
   const found = []
@@ -272,9 +309,37 @@ globalThis.window = {
 // The chip registers dismissal listeners on `document`; the stub records them
 // so a test can fire the same events the browser would.
 const documentListeners = new Map()
+// The workspace rows a sidebar tree draws, standing in for the real ones so the
+// hiding can be checked: the bundle finds them by `data-row-key`, the one stable
+// handle the markup offers. `aria-expanded` tells an open group from a collapsed
+// one, and only an open one may be hidden — a collapsed group renders no
+// sessions, so hiding its header would leave nothing to reopen it with.
+// The group sections those rows sit in, and the indent each carries inline: a tree
+// indents by that single value, so lifting a section one level out is what brings
+// a hidden worktree's sessions up to the project's own level.
+const indentVar = '--dsh-workspace-indent'
+const sectionOf = (indent, outer) => {
+  const section = { parentElement: outer, indent }
+  section.style = {
+    getPropertyValue: (name) => (name === indentVar ? section.indent : ''),
+    setProperty: (name, value) => {
+      if (name === indentVar) section.indent = value
+    },
+  }
+  return section
+}
+const projectSection = sectionOf('0px', undefined)
+const worktreeSection = sectionOf('12px', projectSection)
+const collapsedSection = sectionOf('12px', projectSection)
+const sidebarRows = [
+  { key: 'w-project', style: {}, parentElement: projectSection, getAttribute: (name) => (name === 'aria-expanded' ? 'true' : null) },
+  { key: 'w-worktree', style: {}, parentElement: worktreeSection, getAttribute: (name) => (name === 'aria-expanded' ? 'true' : null) },
+  { key: 'w-collapsed', style: {}, parentElement: collapsedSection, getAttribute: (name) => (name === 'aria-expanded' ? 'false' : null) },
+]
 globalThis.document = {
   createElement: () => ({ dataset: {}, remove() {} }),
   head: { appendChild() {} },
+  querySelectorAll: (selector) => sidebarRows.filter((row) => selector.includes(`[data-row-key="workspace:${row.key}"]`)),
   addEventListener(type, handler) {
     if (!documentListeners.has(type)) documentListeners.set(type, new Set())
     documentListeners.get(type).add(handler)
@@ -298,6 +363,17 @@ globalThis.CustomEvent = class CustomEvent {
     this.type = type
   }
 }
+
+// The plugin asks the host which rows are worktrees as soon as it is applied,
+// which is before the API stub below exists — and Node's `fetch`, unlike the
+// browser's, refuses a relative URL. So requests wait for the stub, exactly as a
+// browser request waits for the network.
+let fetchImpl
+let fetchStubReady
+const fetchReady = new Promise((resolve) => {
+  fetchStubReady = resolve
+})
+globalThis.fetch = (url, options) => fetchReady.then(() => fetchImpl(url, options))
 
 const clientPath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 /** The browser bundle's text, kept so a naming scheme can be loaded again. */
@@ -595,7 +671,14 @@ const NESTED_REPO_ROW = {
 }
 
 const calls = []
-globalThis.fetch = (url, options) => {
+// The removal probes swap the listing in, because per-row dirtiness is the
+// difference the dialog is supposed to act on: the default listing mirrors a
+// repository whose copies are clean and whose branch outlives them.
+let listPayload = null
+// Set when the fake host should answer a removal with the guard's refusal. The
+// panel only learns the row is dirty from that answer when its list was stale.
+let removeRefusesDirty = false
+fetchImpl = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
   // Parse once: `options.body` is the raw JSON string, so reading `.branch` off
   // it directly would silently yield undefined.
@@ -615,7 +698,7 @@ globalThis.fetch = (url, options) => {
             : action === 'list'
               ? body.dir === NON_REPO_DIR
                 ? { ok: false, error: 'not-a-repository', dir: body.dir }
-                : listing
+                : (listPayload ?? listing)
             : action === 'create'
               ? {
                   ok: true,
@@ -629,16 +712,23 @@ globalThis.fetch = (url, options) => {
                   workspace: { workspaceId: 'ws-new', title: 'new', path: '/tmp/demo/app-worktrees/new' },
                 }
               : action === 'remove'
-                ? { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
+                ? removeRefusesDirty
+                  ? { ok: false, error: 'dirty', path: body.path, branch: 'worktree/feat', message: 'the worktree has uncommitted or untracked changes; pass force to discard them' }
+                  : { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
                 : action === 'adopt'
                   ? { ok: true, workspace: { workspaceId: body.path.includes('worktrees') ? 'w2' : 'w1', path: body.path, title: 'feat' } }
-                  : action === 'branch'
+                  : action === 'worktreeRows'
+                    ? { ok: true, rows: ['w-worktree', 'w-collapsed'] }
+                    : action === 'relocate'
+                    ? { ok: true, moved: ['/tmp/demo/app/.dsh/worktrees/aaaa0001'], skipped: [], failed: [] }
+                    : action === 'branch'
                     ? body.dir === NON_REPO_DIR
-                      ? { ok: true }
-                      : { ok: true, root: '/tmp/demo/app', branch: 'worktree/feat' }
+                      ? { ok: true, workspace: 'skyrouter' }
+                      : { ok: true, root: '/tmp/demo/app', branch: 'worktree/feat', workspace: 'skyrouter · ed466e1a' }
                     : { ok: true, output: '' }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
 }
+fetchStubReady()
 
 /**
  * Run render passes until the tree settles.
@@ -753,6 +843,75 @@ check('panel has no create form', !allText.includes('新建工作树') && findBu
 // confirmation asks nothing about it.
 check('no offer to delete a shared branch', !allText.includes('同时删除分支'), allText.slice(-300))
 
+// 0.2's sidebar nests a workspace under the workspace directory containing it
+// only in its `workspace-tree` grouping, which is off by default. The choice is
+// the shell's own persisted store, so the panel reads it, offers the switch on
+// the hosts that have one, and stays silent where its sidebar is patched instead.
+process.stdout.write('\nsidebar grouping\n')
+const VIEW_KEY = 'dsh.workspace.view.v5'
+globalThis.window.localStorage.setItem(VIEW_KEY, JSON.stringify({ groupBy: 'workspace', orderBy: 'updated', archivedFilter: 'default' }))
+const treeLabel = props.t('sidebar.tree')
+const beforeSwitch = await settle(props)
+const switchButton = findButton(beforeSwitch, treeLabel)
+check('the panel offers the workspace-tree grouping where the shell has one', switchButton !== undefined, textsOf(beforeSwitch).slice(-4).join(' | '))
+switchButton?.props?.onClick?.()
+const storedView = JSON.parse(globalThis.window.localStorage.getItem(VIEW_KEY) ?? '{}')
+check(
+  'switching groups the sidebar as a tree and keeps every other choice',
+  storedView.groupBy === 'workspace-tree' && storedView.orderBy === 'updated' && storedView.archivedFilter === 'default',
+  JSON.stringify(storedView),
+)
+const afterSwitch = await settle(props)
+check('the offer is gone once it has been taken', findButton(afterSwitch, treeLabel) === undefined, textsOf(afterSwitch).slice(-4).join(' | '))
+check('the panel says when the switch applies', textsOf(afterSwitch).join(' | ').includes(props.t('sidebar.treeDone')), textsOf(afterSwitch).slice(-4).join(' | '))
+globalThis.window.localStorage.setItem(VIEW_KEY, null)
+const withoutStore = await settle(props)
+check('a shell without that store is left alone', findButton(withoutStore, treeLabel) === undefined, textsOf(withoutStore).slice(-4).join(' | '))
+// Existing worktrees an earlier release parked outside their project are moved
+// in on request: that is what makes the sidebar's containment rule see them.
+const relocateButton = findButton(withoutStore, props.t('relocate.submit'))
+check('the panel offers to move outside worktrees in', relocateButton !== undefined, textsOf(withoutStore).slice(-4).join(' | '))
+relocateButton?.props?.onClick?.()
+const afterRelocate = await settle(props)
+check(
+  'moving worktrees in asks the host and says what moved',
+  calls.some((call) => call.action === 'relocate') && textsOf(afterRelocate).join(' | ').includes(props.t('relocate.done', { count: '1' })),
+  JSON.stringify(calls.map((call) => call.action).slice(-3)),
+)
+// A worktree is a workspace of its own, so a tree gives it a folder line above its
+// sessions. The line is hidden and the sessions stay — the shape the patched
+// 0.1.x sidebar already has — while the project's own row is left alone.
+const rowToggle = findCheckbox(afterRelocate, props.t('rows.hide'))
+check('the panel offers to hide worktree rows', rowToggle !== undefined, textsOf(afterRelocate).slice(-4).join(' | '))
+check(
+  'a worktree row is hidden while its sessions stay',
+  rowToggle?.props?.checked === true && sidebarRows[1].style.display === 'none',
+  JSON.stringify(sidebarRows.map((row) => row.style.display)),
+)
+check(
+  'the sessions it held move out to the project indent',
+  worktreeSection.indent === '0px',
+  worktreeSection.indent,
+)
+check(
+  'the project row it belongs to is left alone',
+  sidebarRows[0].style.display !== 'none' && projectSection.indent === '0px',
+  JSON.stringify([sidebarRows[0].style.display, projectSection.indent]),
+)
+check(
+  'a collapsed worktree row keeps both its row and its indent',
+  sidebarRows[2].style.display !== 'none' && collapsedSection.indent === '12px',
+  JSON.stringify([sidebarRows[2].style.display, collapsedSection.indent]),
+)
+rowToggle?.props?.onChange?.({ target: { checked: false } })
+await settle(props)
+check(
+  'and the checkbox shows the rows and the indent again',
+  window.localStorage.getItem('gord-worktree:hide-worktree-rows') === '0' &&
+    sidebarRows[1].style.display === '' &&
+    worktreeSection.indent === '12px',
+  JSON.stringify([window.localStorage.getItem('gord-worktree:hide-worktree-rows'), sidebarRows.map((row) => row.style.display), worktreeSection.indent]),
+)
 process.stdout.write('\ninteraction: workspace picker\n')
 const pickers = findAllByClass(tree, 'gord-dsh-worktree-select')
 check('the panel offers a workspace picker', pickers.length === 1, String(pickers.length))
@@ -855,6 +1014,133 @@ check('remove is not called before confirmation', !calls.some((call) => call.act
 const confirmRemove = findButton(confirming, '取消') !== undefined ? findButton(confirming, '删除') : undefined
 const submit = confirming.children.flatMap((child) => findButton(child, '删除') ?? []).filter((node) => node !== removeButton)[0]
 check('confirmation offers a submit', submit !== undefined || confirmRemove !== undefined)
+
+// The dialog has to know which work the removal would discard, and the host is
+// the only one that can say: a row cannot read its own dirtiness off its path
+// the way it reads a branch. Everything below pins that the two consents are
+// separate acts and that the list's silence is recoverable.
+const dirtyRow = { ...listing.worktrees[1], dirty: true }
+const cleanRow = { ...listing.worktrees[1], dirty: false, branchShared: false, branch: 'worktree/feat' }
+/** The `label`s wrapping a checkbox: one consent each. */
+function consentBoxes(node, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (Array.isArray(node)) {
+    for (const child of node) consentBoxes(child, out)
+    return out
+  }
+  if (node.type === 'label' && node.children.some((child) => child?.type === 'input')) out.push(node)
+  for (const child of node.children) consentBoxes(child, out)
+  return out
+}
+const boxLabel = (box) => textsOf(box).join('')
+const boxInput = (box) => box?.children.find((child) => child?.type === 'input')
+/** Swap the listing in and make the panel read it, as a real edit would. */
+const relist = async (payload) => {
+  listPayload = payload
+  fireDocument('gord-worktree:changed', {})
+  return await settle(props)
+}
+/** The dialog's own submit, which is the only 删除 left while it is open. */
+const confirmSubmit = (tree) => findButton(tree, '删除')
+
+// Close whatever the previous probe left open; a dialog is a state, not a tree.
+findButton(await settle(props), '取消')?.props.onClick()
+
+process.stdout.write('\ninteraction: the removal dialog knows what it discards\n')
+calls.length = 0
+findButton(await relist({ ...listing, worktrees: [listing.worktrees[0], dirtyRow] }), '删除')?.props.onClick()
+const dirtyDialog = await settle(props)
+check(
+  'a dirty row is warned about before it is removed',
+  textsOf(dirtyDialog).join(' ').includes('该工作树有未提交或未跟踪的改动'),
+  textsOf(dirtyDialog).join(' ').slice(-240),
+)
+const dirtyBoxes = consentBoxes(dirtyDialog)
+check(
+  'a dirty row offers the acknowledgement that discards the work',
+  dirtyBoxes.some((box) => boxLabel(box) === '丢弃改动并删除'),
+  JSON.stringify(dirtyBoxes.map(boxLabel)),
+)
+check(
+  'a shared branch offers no branch deletion',
+  !dirtyBoxes.some((box) => boxLabel(box).startsWith('同时删除分支')),
+  JSON.stringify(dirtyBoxes.map(boxLabel)),
+)
+check('the acknowledgement gates the removal', confirmSubmit(dirtyDialog)?.props.disabled === true, JSON.stringify(confirmSubmit(dirtyDialog)?.props.disabled))
+boxInput(dirtyBoxes.find((box) => boxLabel(box) === '丢弃改动并删除'))?.props.onChange({ target: { checked: true } })
+const armed = await settle(props)
+check('ticking it lets the removal through', confirmSubmit(armed)?.props.disabled === false)
+confirmSubmit(armed)?.props.onClick()
+await settle(props)
+const dirtyCall = calls.filter((call) => call.action === 'remove').pop()
+check(
+  'discarding work does not delete the branch',
+  dirtyCall?.body.force === true && dirtyCall?.body.deleteBranch === false,
+  JSON.stringify(dirtyCall?.body),
+)
+
+// A branch this checkout owns dies with it, and that is a second decision: the
+// list says so with `branchShared`, and the dialog asks separately.
+calls.length = 0
+findButton(await relist({ ...listing, worktrees: [listing.worktrees[0], cleanRow] }), '删除')?.props.onClick()
+const cleanDialog = await settle(props)
+const cleanBoxes = consentBoxes(cleanDialog)
+check(
+  'an owned branch is offered for deletion, named',
+  cleanBoxes.some((box) => boxLabel(box) === '同时删除分支 worktree/feat'),
+  JSON.stringify(cleanBoxes.map(boxLabel)),
+)
+check(
+  'a clean row asks for no discard acknowledgement',
+  !cleanBoxes.some((box) => boxLabel(box) === '丢弃改动并删除'),
+  JSON.stringify(cleanBoxes.map(boxLabel)),
+)
+check('a clean row needs no tick to be removed', confirmSubmit(cleanDialog)?.props.disabled === false)
+boxInput(cleanBoxes.find((box) => boxLabel(box).startsWith('同时删除分支')))?.props.onChange({ target: { checked: true } })
+confirmSubmit(await settle(props))?.props.onClick()
+await settle(props)
+const branchCall = calls.filter((call) => call.action === 'remove').pop()
+check(
+  'deleting the branch is not a side effect of discarding work',
+  branchCall?.body.deleteBranch === true && branchCall?.body.force === false,
+  JSON.stringify(branchCall?.body),
+)
+
+// A row that went dirty after the list was read: the host's own refusal is the
+// later word, and it has to buy the same acknowledgement — otherwise the row
+// that most needs the dialog is the one with no way through it.
+removeRefusesDirty = true
+calls.length = 0
+findButton(await relist(null), '删除')?.props.onClick()
+const staleDialog = await settle(props)
+check(
+  'a list that says clean offers no discard acknowledgement',
+  !consentBoxes(staleDialog).some((box) => boxLabel(box) === '丢弃改动并删除'),
+  JSON.stringify(consentBoxes(staleDialog).map(boxLabel)),
+)
+check('a clean-looking row can be submitted', confirmSubmit(staleDialog)?.props.disabled === false)
+confirmSubmit(staleDialog)?.props.onClick()
+const refused = await settle(props)
+check(
+  'the refusal is reported, not swallowed',
+  textsOf(refused).join(' ').includes('uncommitted or untracked changes'),
+  textsOf(refused).join(' ').slice(-240),
+)
+const refusedBoxes = consentBoxes(refused)
+check(
+  'the refusal reveals the acknowledgement',
+  refusedBoxes.some((box) => boxLabel(box) === '丢弃改动并删除'),
+  JSON.stringify(refusedBoxes.map(boxLabel)),
+)
+check('the dialog stays open after a refusal', confirmSubmit(refused) !== undefined)
+boxInput(refusedBoxes.find((box) => boxLabel(box) === '丢弃改动并删除'))?.props.onChange({ target: { checked: true } })
+confirmSubmit(await settle(props))?.props.onClick()
+await settle(props)
+const forcedCall = calls.filter((call) => call.action === 'remove').pop()
+check('the revealed acknowledgement is what is sent', forcedCall?.body.force === true, JSON.stringify(forcedCall?.body))
+removeRefusesDirty = false
+listPayload = null
+calls.length = 0
 
 process.stdout.write('\nsettings: project comes from the workspace list\n')
 // There is no path field and no session diagnostic any more: the page manages
@@ -1811,6 +2097,21 @@ check(
   textsOf(hovered).join('').includes('worktree/feat'),
   textsOf(hovered).join(''),
 )
+// The card draws the session title itself, so the workspace has to be lifted
+// above it rather than merely rendered first in the slot.
+const workspaceLine = findNode(hovered, 'data-worktree-workspace')
+check(
+  'the hover card names the workspace above the session title',
+  workspaceLine !== undefined &&
+    workspaceLine.props['data-worktree-workspace'] === 'skyrouter · ed466e1a' &&
+    workspaceLine.props.style?.order === -1,
+  JSON.stringify(textsOf(hovered).join('')),
+)
+check(
+  'and the branch keeps its own line',
+  findNode(hovered, 'data-worktree-branch')?.props?.['data-worktree-branch'] === 'worktree/feat',
+  JSON.stringify(textsOf(hovered).join('')),
+)
 check(
   'the branch line forgets its cache when the window is focused',
   Array.isArray(globalThis.window.listeners.focus) && globalThis.window.listeners.focus.length > 0,
@@ -1824,8 +2125,11 @@ const readsBefore = branchCalls()
 sessionList.byId.s1.cwd = NON_REPO_DIR
 const hovering = await renderHover(withNavigation.hover, 's1')
 check(
-  'a session outside a repository shows no branch',
-  hovering === null || hovering === undefined,
+  'a session outside a repository still names its workspace, with no branch',
+  hovering !== null &&
+    hovering !== undefined &&
+    textsOf(hovering).join('').includes('skyrouter') &&
+    findNode(hovering, 'data-worktree-branch') === undefined,
   JSON.stringify(textsOf(hovering).join('')),
 )
 check(
