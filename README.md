@@ -19,7 +19,9 @@ and an opt-in patch that lets read-only tool calls run concurrently.
    **Unarchive** per row, a delete icon, and **Delete all** for the set.
 5. **Double-click to rename** — rename a session from its sidebar row, without the menu.
 6. **Fast mode (快速模式)** — a slim agent preset that ships in the bundle patch, so the preset picker has it
-   as soon as the plugin is installed.
+   as soon as the plugin is installed. It reads a request for what it means rather than for what it says:
+   when the words cannot be carried out as written, it takes the reading the context supports and says which
+   one — and asks instead when the reading would reverse the request or the named path does not exist.
 7. **Concurrent read-only tool calls** — an opt-in patch for `bash`, `glob` and `grep`, so a step that
    batches reads overlaps them instead of running them one after another.
 8. **Session hover card** — hovering a session names the workspace it runs in at the top (the workspace

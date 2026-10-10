@@ -1,6 +1,6 @@
 {
   "name": "gord-dsh-worktree",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Git worktrees for DeepSeek Harness — isolate parallel work in its own directory and branch. Ships Fast mode (快速模式).",
   "keywords": [
     "dsh",

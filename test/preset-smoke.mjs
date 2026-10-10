@@ -97,6 +97,19 @@ check('the persona forbids blocking waits', /Never wait inside the turn/.test(so
 check('the persona asks once, up front', /ask it as your opening move/.test(source))
 check('the removed three-beat wording is gone', !/three-beat/.test(source))
 
+// The mistyped-request rule: make the agent reason about what was meant, and keep it free
+// of worked examples — naming one pair teaches that pair instead of the habit.
+check('the persona reads a request for what it means', source.includes('for what it means, not only for what it says'))
+check('the persona weighs a mistyped word instead of taking it literally', /wrong candidate\s+for the sound that was meant/.test(source))
+check('the mistyping mechanism covers dictation and half-typed words', /dictation/.test(source) && /left unconverted/.test(source))
+check('the trigger is that the request cannot be carried out as written', /cannot be carried out as written/.test(source))
+check('the trigger covers work that is already done', /step is\s+already done/.test(source))
+check('the persona says which reading it took', /say\s+in one line which reading you took/.test(source))
+check('a dropped negation is asked about rather than inferred', /never infer that one/.test(source))
+check('the persona still asks when no reading fits or the reading destroys', /Ask once up front when no reading fits/.test(source))
+check('a named path is searched for, never silently substituted', /find the nearest one that does and say which you/.test(source))
+check('the mistyping rule carries no worked word examples', !/擦拭|部属|侧室/.test(source))
+
 // 6. Shape the loader needs: LF, no tabs, and a trailing newline.
 check('the file has no tab characters', !source.includes('\t'))
 check('the file ends with exactly one newline', source.endsWith('\n') && !source.endsWith('\n\n'))
