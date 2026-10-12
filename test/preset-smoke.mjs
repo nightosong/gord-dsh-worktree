@@ -110,6 +110,21 @@ check('the persona still asks when no reading fits or the reading destroys', /As
 check('a named path is searched for, never silently substituted', /find the nearest one that does and say which you/.test(source))
 check('the mistyping rule carries no worked word examples', !/擦拭|部属|侧室/.test(source))
 
+// The file-observation rule: a read the harness never saw does not license an edit, and a
+// failing call is not worth repeating verbatim.
+check('the persona requires a read-tool read before an edit', /read with the read tool before it is edited/.test(source))
+check('a file written by anything but the read tool counts as unread', /anything but the\s+read tool wrote it/.test(source))
+check('same-file calls are ordered rather than batched', /never a write beside an edit of that file/.test(source))
+check('a tool error is read and the call changed, not repeated', /never send the identical\s+failing call twice/.test(source))
+
+// Authorized boundary evaluation: do the engineering, never the content, and refuse the
+// crossing action without dropping the task around it.
+check('the persona frames authorized boundary evaluation as engineering', /Authorized boundary evaluation is engineering, not a content request/.test(source))
+check('a restricted case is an inert label or an existing fixture', /inert category label or an existing fixture/.test(source))
+check('reworded retries past a filter are forbidden', /Never generate, paraphrase, substitute, vary or\s+reword to get past a filter/.test(source))
+check('a refusal is recorded, not replayed or worked around', /reproduced from its trace id\s+instead of replayed/.test(source))
+check('one refused action does not take the task with it', /do not refuse the whole task, or the\s+steps after it/.test(source))
+
 // 6. Shape the loader needs: LF, no tabs, and a trailing newline.
 check('the file has no tab characters', !source.includes('\t'))
 check('the file ends with exactly one newline', source.endsWith('\n') && !source.endsWith('\n\n'))

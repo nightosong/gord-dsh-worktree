@@ -122,8 +122,8 @@ branches with ordinary git when the task calls for it; changing branch does not 
 **Which project, and where the checkout goes.** A worktree belongs to a project, and the project is
 resolved rather than chosen: it is the workspace the new session is being started in — read from the
 picker in the same row, or from the session itself — and that workspace's repository, or the repository
-inside it when the workspace is a container of projects (`apifree` holds `backend/rest-atlas` and
-`backend/oms-atlas`; `x-gordon` holds four more). Only when none of that is readable does it fall back
+inside it when the workspace is a container of projects (one workspace can hold several checkouts, each its
+own repository). Only when none of that is readable does it fall back
 to the most recently used repository workspace. The control names the project it will use, so nothing is decided invisibly, and the new
 worktree is a second checkout of that project's current branch — the branch the project itself is on,
 upstream and all, rather than a generated name of its own, so parallel copies of one project work on
@@ -452,7 +452,7 @@ The *Settings → Worktrees* page opens on one project, and resolves which one f
 the active session is working in, or — when that is not a repository — the most recently used of your
 workspace repositories. A picker above the list then names the workspaces that hold a repository — the
 same set the sidebar shows. The one exception is the container the session itself is in, whose projects
-are named `apifree › rest-atlas`: without them a session sitting in a container has nothing to cut from.
+are named `monorepo › service-a`: without them a session sitting in a container has nothing to cut from.
 Choosing one re-lists that project's worktrees, so the page can be pointed anywhere without leaving it. Nothing is ever typed: no path field, no repository diagnostics, and the
 composer's own chip keeps deciding where a *new* worktree belongs. Worktrees are created outside every
 project, so a checkout never appears in its own project's diffs.

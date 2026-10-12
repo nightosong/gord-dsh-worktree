@@ -21,11 +21,13 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 6. **Fast mode (快速模式)** — a slim agent preset that ships in the bundle patch, so the preset picker has it
    as soon as the plugin is installed. It reads a request for what it means rather than for what it says:
    when the words cannot be carried out as written, it takes the reading the context supports and says which
-   one — and asks instead when the reading would reverse the request or the named path does not exist.
+   one — and asks instead when the reading would reverse the request or the named path does not exist. It
+   reads a file before editing it, and treats an authorized boundary evaluation on your own endpoint as
+   engineering to run rather than a subject to refuse.
 7. **Concurrent read-only tool calls** — an opt-in patch for `bash`, `glob` and `grep`, so a step that
    batches reads overlaps them instead of running them one after another.
 8. **Session hover card** — hovering a session names the workspace it runs in at the top (the workspace
-   title: `skyrouter`, or `skyrouter · ed466e1a` for a worktree of it) with the branch of its directory
+   title: `checkout-service`, or `checkout-service · ed466e1a` for a worktree of it) with the branch of its
    below.
 
 ![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)

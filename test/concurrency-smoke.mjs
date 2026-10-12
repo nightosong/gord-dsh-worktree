@@ -181,7 +181,7 @@ const cases = [
   ['npm install', false],
   ['pnpm add -D x', false],
   ['node test/host-smoke.mjs', false],
-  ['python3 scripts/db_read.py --project sr-maas', false],
+  ['python3 scripts/report.py --project prod', false],
   ['curl -X POST https://x -d @body.json', false],
   ['curl -o /tmp/out https://x', false],
   ['yq -i ".a=1" f.yaml', false],
