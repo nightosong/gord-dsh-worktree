@@ -466,6 +466,20 @@ const jumpCalls = []
 // Workspace registration the panel performs through the client service.
 const createdWorkspaces = []
 const renamedWorkspaces = []
+const selectedPanels = []
+let navigationFailure = ''
+let workspaceOpenGate
+let workspaceNavigationCancelled = false
+const workspaceListeners = new Set()
+const sessionCatalogListeners = new Set()
+const workspaceSnapshot = {
+  phase: 'ready', archivedSessionIds: [],
+  items: [
+    { workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo', sessionIds: ['s1'], updatedAt: 5 },
+    { workspaceId: 'w4', path: '/tmp/demo/app-worktrees/feat', title: 'feat', sessionIds: [], updatedAt: 2 },
+    { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other', sessionIds: [], updatedAt: 1 },
+  ],
+}
 /** Slot names the plugin asked to inject into, in order. */
 const sidebarSpecs = []
 /** Session list snapshot the fake `sessions` service answers with. */
@@ -473,6 +487,7 @@ const sidebarSpecs = []
 // current session comes from `uiSession` (below). Reading `current` off this
 // snapshot is what made the settings page report an unknown session directory.
 const sessionList = {
+  phase: 'ready',
   byId: { s1: { id: 's1', cwd: '/tmp/demo/app', blank: true, updatedAt: 10 } },
 }
 root.plugin({
@@ -498,7 +513,7 @@ root.plugin({
     serviceCtx.provide('sessions', {
       list: {
         getSnapshot: () => sessionList,
-        subscribe: () => () => {},
+        subscribe: (listener) => { sessionCatalogListeners.add(listener); return () => sessionCatalogListeners.delete(listener) },
       },
       // The real contract is `Promise<SessionId>` — a bare string. Returning a
       // result object here is exactly the mistake that let a broken unwrap
@@ -528,13 +543,20 @@ root.plugin({
     // here so the modern path, not the fallback, is what the suite exercises.
     serviceCtx.provide('uiWorkspace', {
       openSession: (id) => {
+        if (navigationFailure) return Promise.reject(new Error(navigationFailure))
         navigationCalls.push(id)
         jumpCalls.push('open:' + id)
       },
-      startSession: (workspaceId) => {
-        jumpCalls.push('start:' + workspaceId)
+      openWorkspace: async (workspaceId, beforeOpen) => {
+        if (workspaceOpenGate) await workspaceOpenGate
+        if (navigationFailure) throw new Error(navigationFailure)
+        if (workspaceNavigationCancelled) return
+        beforeOpen?.('new-workspace-session')
+        jumpCalls.push('workspace:' + workspaceId)
       },
+      startSession: (workspaceId) => { jumpCalls.push('start:' + workspaceId) },
     })
+    serviceCtx.provide('layout', { selectPanel: (panel) => selectedPanels.push(panel) })
     serviceCtx.provide('slots', {
       inject(name, factory) {
         if (name === 'conversation.input.dock') chipSpec = { name, factory }
@@ -574,15 +596,11 @@ root.plugin({
     // session's own directory is not a repository. The plugin reads it through
     // a declared injection, so the stub has to expose the service's own shape.
     serviceCtx.provide('workspaces', {
-      // `w1` already owns a session and `w2` owns none: the two branches of the
-      // open action, told apart by what the workspace itself reports.
-      getSnapshot: () => ({
-        items: [
-          { workspaceId: 'w1', path: '/tmp/demo/app', title: 'demo', sessionIds: ['s1'], updatedAt: 5 },
-          { workspaceId: 'w4', path: '/tmp/demo/app-worktrees/feat', title: 'feat', sessionIds: [], updatedAt: 2 },
-          { workspaceId: 'w2', path: '/tmp/demo/other', title: 'other', sessionIds: [], updatedAt: 1 },
-        ],
-      }),
+      // The real IWorkspaces contract exposes only .list.getSnapshot().
+      list: {
+        getSnapshot: () => workspaceSnapshot,
+        subscribe: (listener) => { workspaceListeners.add(listener); return () => workspaceListeners.delete(listener) },
+      },
       // The registering half of the open action goes through this service, not the
       // host route: it is what updates the store the navigation reads.
       create: (input) => {
@@ -591,6 +609,7 @@ root.plugin({
       },
       rename: (workspaceId, title) => {
         renamedWorkspaces.push({ workspaceId, title })
+        workspaceSnapshot.items.find((row) => row.workspaceId === workspaceId).title = title
         return Promise.resolve()
       },
     })
@@ -678,6 +697,7 @@ let listPayload = null
 // Set when the fake host should answer a removal with the guard's refusal. The
 // panel only learns the row is dirty from that answer when its list was stale.
 let removeRefusesDirty = false
+let removeWorkspaceFailure = false
 fetchImpl = (url, options) => {
   const action = new URL(url, 'http://localhost').searchParams.get('action')
   // Parse once: `options.body` is the raw JSON string, so reading `.branch` off
@@ -714,7 +734,7 @@ fetchImpl = (url, options) => {
               : action === 'remove'
                 ? removeRefusesDirty
                   ? { ok: false, error: 'dirty', path: body.path, branch: 'worktree/feat', message: 'the worktree has uncommitted or untracked changes; pass force to discard them' }
-                  : { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true }
+                  : { ok: true, removed: body.path, branch: 'worktree/feat', branchDeleted: true, workspaceCleanup: { removed: [], failed: removeWorkspaceFailure ? [{ message: 'registry unavailable' }] : [] } }
                 : action === 'adopt'
                   ? { ok: true, workspace: { workspaceId: body.path.includes('worktrees') ? 'w2' : 'w1', path: body.path, title: 'feat' } }
                   : action === 'worktreeRows'
@@ -955,7 +975,7 @@ openButton?.props.onClick()
 const adopted = await settle(props)
 // Registering through the client service is what makes the second row navigable:
 // the host route leaves the store that navigation reads none the wiser.
-check('opening registers through the client workspace service', createdWorkspaces.length === 1, JSON.stringify(createdWorkspaces))
+check('opening reuses a registered workspace without creating another', createdWorkspaces.length === 0, JSON.stringify(createdWorkspaces))
 check('and does not need the host route for it', !calls.some((call) => call.action === 'adopt'), JSON.stringify(calls.map((c) => c.action)))
 
 // Navigating is the point: a worktree whose workspace already has a session must
@@ -972,7 +992,8 @@ const openButtons = findAllByClass(adopted, 'gord-dsh-worktree-btn').filter((nod
 check('every row offers the one action', openButtons.length === 2, JSON.stringify(openButtons.length))
 openButtons[1]?.props.onClick()
 await settle(props)
-check('a workspace with no session starts one', jumpCalls.includes('start:w4'), JSON.stringify(jumpCalls))
+check('a workspace with no session awaits native workspace navigation', jumpCalls.includes('workspace:w4') && !jumpCalls.some((item) => item.startsWith('start:')), JSON.stringify(jumpCalls))
+check('successful navigation closes Settings through the layout service', selectedPanels.length === 2 && selectedPanels.every((panel) => panel === null), JSON.stringify(selectedPanels))
 // The registry names a directory after itself, so a bare code has to be renamed
 // to read like the ones the composer creates.
 check(
@@ -980,6 +1001,104 @@ check(
   renamedWorkspaces.length === 1 && renamedWorkspaces[0].title === 'app · feat',
   JSON.stringify(renamedWorkspaces),
 )
+
+const mainWorkspaceForTitle = workspaceSnapshot.items.find((row) => row.workspaceId === 'w1')
+mainWorkspaceForTitle.title = 'app'
+const renamesBeforeMainOpen = renamedWorkspaces.length
+await Section(props).props.openWorktree(mainWorkspaceForTitle.path, 'app')
+check('opening the project itself never generates a duplicated project title',
+  mainWorkspaceForTitle.title === 'app' && renamedWorkspaces.slice(renamesBeforeMainOpen).every((row) => row.title !== 'app · app'))
+mainWorkspaceForTitle.title = 'demo'
+
+process.stdout.write('\ninteraction: resume history and await navigation\n')
+const wtWorkspace = workspaceSnapshot.items.find((row) => row.workspaceId === 'w4')
+wtWorkspace.sessionIds = ['old-chat', 'new-draft', 'archived-chat']
+sessionList.byId['old-chat'] = { id: 'old-chat', cwd: wtWorkspace.path, blank: false, updatedAt: 20 }
+sessionList.byId['new-draft'] = { id: 'new-draft', cwd: wtWorkspace.path, blank: true, updatedAt: 100 }
+sessionList.byId['archived-chat'] = { id: 'archived-chat', cwd: wtWorkspace.path, blank: false, updatedAt: 200 }
+workspaceSnapshot.archivedSessionIds = ['archived-chat']
+const openSettingsWorktree = () => Section(props).props.openWorktree(wtWorkspace.path, 'app')
+let startsBefore = jumpCalls.filter((value) => value.startsWith('workspace:')).length
+await openSettingsWorktree()
+check('real history is restored instead of a newer blank or archived session', jumpCalls.at(-1) === 'open:old-chat', JSON.stringify(jumpCalls))
+check('restoring history creates no new session', jumpCalls.filter((value) => value.startsWith('workspace:')).length === startsBefore)
+wtWorkspace.sessionIds = ['cold-chat', 'new-draft']
+await openSettingsWorktree()
+check('an authoritative member missing from the local session catalog is opened by id', jumpCalls.at(-1) === 'open:cold-chat', JSON.stringify(jumpCalls))
+
+wtWorkspace.sessionIds = ['old-chat']
+const baselineCatalogListeners = sessionCatalogListeners.size
+const baselineWorkspaceListeners = workspaceListeners.size
+workspaceSnapshot.phase = 'pending'
+sessionList.phase = 'pending'
+let pendingSettled = false
+const pendingOpen = openSettingsWorktree().then(() => { pendingSettled = true })
+await new Promise((resolve) => setImmediate(resolve))
+check('pending catalogs do not trigger session creation or a jump', !pendingSettled && jumpCalls.filter((value) => value.startsWith('workspace:')).length === startsBefore)
+workspaceSnapshot.phase = 'ready'
+for (const listener of [...workspaceListeners]) listener()
+await new Promise((resolve) => setImmediate(resolve))
+check('workspace readiness alone cannot mistake pending sessions for an empty history', !pendingSettled)
+sessionList.phase = 'ready'
+for (const listener of [...sessionCatalogListeners]) listener()
+await pendingOpen
+check('opening resumes after both catalogs are ready', jumpCalls.at(-1) === 'open:old-chat')
+check('catalog subscriptions are released after opening', workspaceListeners.size === baselineWorkspaceListeners && sessionCatalogListeners.size === baselineCatalogListeners)
+
+navigationFailure = 'open blocked'
+const panelsBeforeFailure = selectedPanels.length
+const settingsOpenButton = (tree) => findAllByClass(tree, 'gord-dsh-worktree-btn').filter((node) => textsOf(node).join('') === '打开会话')[1]
+settingsOpenButton(await settle(props))?.props.onClick()
+const failedOpen = await settle(props)
+check('a navigation failure remains visible in Settings', textsOf(failedOpen).join(' ').includes('open blocked'), textsOf(failedOpen).join(' ').slice(-200))
+check('a failed existing-session open neither closes Settings nor starts another session', selectedPanels.length === panelsBeforeFailure && jumpCalls.filter((value) => value.startsWith('workspace:')).length === startsBefore)
+navigationFailure = ''
+
+wtWorkspace.sessionIds = []
+let completeWorkspaceOpen
+workspaceOpenGate = new Promise((resolve) => { completeWorkspaceOpen = resolve })
+const panelsBeforePending = selectedPanels.length
+settingsOpenButton(await settle(props))?.props.onClick()
+await settle(props)
+check('Settings stays open until asynchronous navigation completes', selectedPanels.length === panelsBeforePending)
+completeWorkspaceOpen()
+workspaceOpenGate = undefined
+await settle(props)
+check('Settings closes after asynchronous navigation succeeds', selectedPanels.length === panelsBeforePending + 1)
+navigationFailure = 'create failed'
+settingsOpenButton(await settle(props))?.props.onClick()
+const failedCreate = await settle(props)
+check('new-session failures are awaited and displayed', textsOf(failedCreate).join(' ').includes('create failed'))
+check('failed creation does not close Settings or call fire-and-forget startSession', selectedPanels.length === panelsBeforePending + 1 && !jumpCalls.some((value) => value.startsWith('start:')))
+navigationFailure = ''
+workspaceSnapshot.archivedSessionIds = []
+workspaceNavigationCancelled = true
+const panelsBeforeSuperseded = selectedPanels.length
+check('superseded navigation is not reported as a successful jump', await openSettingsWorktree() === false)
+check('superseded navigation cannot close a newer panel', selectedPanels.length === panelsBeforeSuperseded)
+workspaceNavigationCancelled = false
+
+const navigationService = root.get('uiWorkspace')
+const nativeOpenWorkspace = navigationService.openWorkspace
+const nativeOpenSession = navigationService.openSession
+navigationService.openWorkspace = undefined
+navigationService.openSession = undefined
+const legacyCreatedBefore = createdSessions.length
+await openSettingsWorktree()
+check('older controllers await session creation and open the returned string id',
+  createdSessions.length === legacyCreatedBefore + 1 && openedSessions.at(-1) === createdSessions.at(-1)?.sessionId)
+wtWorkspace.sessionIds = ['old-chat']
+await openSettingsWorktree()
+check('older controllers also restore an existing session without creating one',
+  createdSessions.length === legacyCreatedBefore + 1 && openedSessions.at(-1) === 'old-chat')
+navigationService.openWorkspace = nativeOpenWorkspace
+navigationService.openSession = nativeOpenSession
+workspaceSnapshot.state = 'error'
+let catalogFailure
+try { await openSettingsWorktree() } catch (error) { catalogFailure = error }
+check('catalog errors are reported instead of creating a session from an empty fallback', catalogFailure !== undefined && createdSessions.length === legacyCreatedBefore + 1)
+workspaceSnapshot.state = 'idle'
+
 
 process.stdout.write('\ninteraction: remove with confirmation\n')
 const removeButton = findButton(adopted, '删除')
@@ -1052,10 +1171,11 @@ findButton(await relist({ ...listing, worktrees: [listing.worktrees[0], dirtyRow
 const dirtyDialog = await settle(props)
 check(
   'a dirty row is warned about before it is removed',
-  textsOf(dirtyDialog).join(' ').includes('该工作树有未提交或未跟踪的改动'),
+  textsOf(dirtyDialog).join(' ').includes('未提交、未跟踪或被 Git 忽略的文件'),
   textsOf(dirtyDialog).join(' ').slice(-240),
 )
 const dirtyBoxes = consentBoxes(dirtyDialog)
+check('the management panel requests deletion safety for every row', calls.some((call) => call.action === 'list' && call.body.dirty === true))
 check(
   'a dirty row offers the acknowledgement that discards the work',
   dirtyBoxes.some((box) => boxLabel(box) === '丢弃改动并删除'),
@@ -1070,8 +1190,14 @@ check('the acknowledgement gates the removal', confirmSubmit(dirtyDialog)?.props
 boxInput(dirtyBoxes.find((box) => boxLabel(box) === '丢弃改动并删除'))?.props.onChange({ target: { checked: true } })
 const armed = await settle(props)
 check('ticking it lets the removal through', confirmSubmit(armed)?.props.disabled === false)
+const changesBeforeRemoval = dispatched.filter((name) => name === 'gord-worktree:changed').length
+const rowReadsBeforeRemoval = calls.filter((call) => call.action === 'worktreeRows').length
 confirmSubmit(armed)?.props.onClick()
 await settle(props)
+check('successful removal announces the change and refreshes sidebar row identities',
+  dispatched.filter((name) => name === 'gord-worktree:changed').length > changesBeforeRemoval &&
+  calls.filter((call) => call.action === 'worktreeRows').length > rowReadsBeforeRemoval)
+
 const dirtyCall = calls.filter((call) => call.action === 'remove').pop()
 check(
   'discarding work does not delete the branch',
@@ -1141,6 +1267,15 @@ check('the revealed acknowledgement is what is sent', forcedCall?.body.force ===
 removeRefusesDirty = false
 listPayload = null
 calls.length = 0
+
+removeWorkspaceFailure = true
+findButton(await relist({ ...listing, worktrees: [listing.worktrees[0], cleanRow] }), '删除')?.props.onClick()
+confirmSubmit(await settle(props))?.props.onClick()
+const cleanupFailure = await settle(props)
+check('a partial workspace cleanup failure is shown instead of claiming complete deletion',
+  textsOf(cleanupFailure).join(' ').includes('侧栏工作区清理失败') && textsOf(cleanupFailure).join(' ').includes('registry unavailable'))
+removeWorkspaceFailure = false
+listPayload = null
 
 process.stdout.write('\nsettings: project comes from the workspace list\n')
 // There is no path field and no session diagnostic any more: the page manages

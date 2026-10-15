@@ -36,6 +36,11 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 
 ## Where worktrees live
 
+New worktrees get an independent `worktree/<code>` branch from HEAD, including detached HEAD.
+Branches checked out elsewhere are refused. Existing shared-branch worktrees are left untouched; switch
+each to its own branch before parallel development. Deletion safety includes ignored files such as
+`.env`, which require explicit consent to discard.
+
 A worktree is created inside its own project, at `<project>/.dsh/worktrees/<code>`: the directory really
 being inside the project is what lets each sidebar nest it under that project. It still never pollutes the
 project's `git status` or its diffs, because the plugin adds `/.dsh/worktrees/` to that repository's own
@@ -88,8 +93,12 @@ npm run patch:concurrency     # --check to inspect first, --revert to undo
 It needs a `dsh web` restart, it is idempotent, and it stays manual by design: it touches `dsh-tool-bash` and
 `dsh-tool-fs-search`, which the desktop app can never carry, so leaving it out keeps both hosts scheduling
 read-only calls the same way. A DSH upgrade restores those files — re-run it after one, and use
-`npm run check:concurrency` to see where it stands: `patched`, `original`, or `unknown` when the build moved
-on, which the tool refuses to force and reports instead.
+`npm run check:concurrency` to see where it stands: `patched`, `original`, `outdated` for an older
+classifier, or `unknown` when the build moved on. Rerun the patch to update an older classifier; unknown
+builds are refused without writes.
+
+For a remote hostname or a reverse proxy, configure exact public origins in
+`allowedOrigins: ["https://dsh.example.com"]`. Direct IP access validates the request host and port.
 
 ## Across DSH versions
 

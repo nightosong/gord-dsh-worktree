@@ -125,11 +125,9 @@ picker in the same row, or from the session itself — and that workspace's repo
 inside it when the workspace is a container of projects (one workspace can hold several checkouts, each its
 own repository). Only when none of that is readable does it fall back
 to the most recently used repository workspace. The control names the project it will use, so nothing is decided invisibly, and the new
-worktree is a second checkout of that project's current branch — the branch the project itself is on,
-upstream and all, rather than a generated name of its own, so parallel copies of one project work on
-the same line of work and the one row that is the project is marked as such. It always lands inside
-the project, in `.dsh/worktrees/`, under a short random code rather than the branch name — one branch can be
-checked out in several worktrees, so a branch-named directory could not stay unique. Really living inside the
+worktree gets an independent `worktree/<code>` branch from the current HEAD, including detached HEAD.
+A branch already checked out elsewhere is refused even with `force`. It always lands inside
+the project, in `.dsh/worktrees/`, under a short random code that stays stable when switching branches. Really living inside the
 project is what lets the desktop's workspace tree nest it under that project, while the directory is added to
 the repository's local `git/info/exclude` so it never shows up in the project's own `git status` or diffs. A
 requested path elsewhere inside the project is refused rather than quietly relocated.
@@ -168,8 +166,22 @@ worktree therefore needs a workspace at that path — without one the shell has 
 shows *choose a workspace to start* over a session that does exist. So each worktree you start a session
 in appears in the sidebar beside the project, titled by its directory code, exactly as the core's own
 *new workspace* flow would leave it. Settings also offers the worktree's **Open session** action, which
-registers the directory if it has to and then goes to that workspace's chat — its newest session, or a
-new one when it has none.
+registers the directory only when needed and restores its newest non-blank, non-archived session.
+It reads `workspaces.list.getSnapshot()` (with an older-controller fallback), waits for pending catalogs,
+and does not discard authoritative members just because the local summary is missing. Only a workspace
+with no usable session gets a new one. Creation and navigation are awaited; Settings closes only after
+a successful jump, and failures remain visible there.
+
+Removing a worktree also removes its exact-path workspace registrations, including legacy symlink
+aliases, while retaining every session log. The host publishes registry deletions to the sidebar; the
+client clears the parent map and refreshes its hidden-row ids. A registry cleanup failure is reported
+separately from the completed Git removal.
+
+At startup the plugin also retires legacy registrations under `<project>/.dsh/worktrees/<8-hex-code>`
+only when their directory is missing, the main repository is readable, and Git no longer lists that
+checkout. Existing checkouts, missing-but-registered checkouts, offline projects and custom locations
+are retained, as are all session logs. Generated duplicate main-project titles such as `app · app`
+are repaired without replacing custom names.
 
 Only this route adopts. `worktree_create` does not: a worktree made mid-conversation leaves the session
 where it is, so it needs no workspace, and adopting there would add a sidebar entry nobody asked for.
@@ -319,18 +331,20 @@ another, and why a batched `read` waits behind a `bash` beside it.
 | `dsh-tool-fs-search` | `isConcurrencySafe: () => true` for `glob` |
 | `dsh-tool-fs-search` | `isConcurrencySafe: () => true` for `grep` |
 
-The classifier is fail-closed. A command is parallel only when *every* `|`, `&&` and `;` segment starts
-with a command from a small read-only allowlist — `ls`, `cat`, `head`, `grep`, `rg`, `find` (without
-`-delete`/`-exec`), `sed` (without `-i`), `awk`, `jq`, `yq` (without `-i`), `sort` (without `-o`),
-`diff`, `stat`, `ps`, `pgrep`, `lsof`, `dig`, `curl` (without `-X`/`-d`/`-o`/…), the read-only
-subcommands of `git`/`docker`/`npm`/`kubectl`/`gh`, and so on — with no `>` anywhere and no command
-substitution. Everything else is exclusive, exactly as before: writers, `sed -i`, `npm install`, `git
-commit`, scripts (`node x.mjs`, `python3 scripts/…`), loops, `sleep`, `xargs`, and anything unrecognized.
+The classifier defaults to exclusive scheduling. It recognizes quoted words, pipelines, `&&`, `||`,
+and `;`, and allows only known simple reading forms such as `ls`, `cat`, `grep`, `rg`, `jq` and a limited
+set of Git queries. Wrappers such as `env`, interpreters, `sed`, `awk`, `curl`, package managers,
+output-file redirects, background commands, substitutions, unquoted globs and unknown flags stay
+exclusive. Ripgrep preprocessors and Git writing/external-program modes are excluded too. This is
+scheduling classification, not a shell sandbox.
+
+An older installed classifier is reported as `outdated` by `--check`. Rerunning
+`npm run patch:concurrency` replaces it while preserving the original core backup; restart `dsh web`.
 
 Three properties matter as much as the classification:
 
 - **Idempotent and recognizable.** Each row carries a marker; `--check` reports `patched`, `original`,
-  or `unknown` per row and exits 2 while anything is still pending.
+  `outdated`, or `unknown` per row and exits 2 while anything is still pending.
 - **Fail-closed on a changed build.** Every anchor must match exactly once before any file is written, so
   a DSH build that moved on leaves all of them untouched and exits 1 with `not in the expected shape`
   rather than half-patching.
@@ -417,7 +431,7 @@ dsh plugin --profile web add github:nightosong/gord-dsh-worktree
 | `worktree_list` | Every worktree of a repository: path, branch, HEAD, and current/detached/locked/pruned state — plus every local and remote-tracking branch, which is what to consult before naming a base. |
 | `worktree_create` | Creates the directory and its branch in one command; checks out an existing branch instead of recreating it, and starts from a remote-tracking branch of the same name when only that exists. |
 | `worktree_status` | One worktree's branch, upstream line, and changed files. |
-| `worktree_remove` | Removes a worktree. Refuses when it holds uncommitted or untracked changes; `force` discards them on purpose. |
+| `worktree_remove` | Removes a worktree. Refuses when it holds uncommitted, untracked, or ignored files; `force` discards them on purpose. |
 | `worktree_prune` | Drops records of worktrees whose directories are gone. Deletes no files. |
 | `worktree_relocate` | Moves worktrees left in `$DSH_HOME/worktree` into their project, leaving a symlink at each old path and handing the sidebar workspace over to the new path. |
 
@@ -427,16 +441,16 @@ point at another one.
 ## Safety rules
 
 - The main worktree is never removable.
-- A dirty worktree is never removed without `force` — and "dirty" counts untracked files, because
-  `worktree remove --force` would delete them.
+- Deletion safety includes uncommitted, untracked and ignored files. Removing those requires explicit `force`.
 - A locked worktree is reported, not silently unlocked.
 - Branch names are validated by `git check-ref-format`, and every worktree path is passed to git as a
   positional argument, never through a shell, so a name can never become a flag.
 - The HTTP surface the panel uses runs git on this machine, so the mutating route accepts same-origin
   and loopback callers only. It is not a remote API.
 - Deleting archived sessions is the only destructive operation that is not about git, and the only one
-  that cannot be undone. It is behind an explicit confirmation, it removes only the ids it was handed,
-  and it refuses to touch a session that is still running.
+  that cannot be undone. It is behind an explicit confirmation, it accepts only valid session ids,
+  rechecks archive membership in the registry queue, and refuses running sessions. Traversal paths and
+  session-directory symlinks are not followed.
 - The concurrency patch decides only *scheduling*, never what runs: a call classified parallel is still
   the same command with the same result. Its classifier is fail-closed, so the worst case is the old
   behaviour — a read-only command that stays exclusive — and a command it does not recognize is never
@@ -447,6 +461,14 @@ point at another one.
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
 | `defaultParent` | *(empty)* | Directory new worktrees are created in. Empty uses `.dsh/worktrees/` inside the project. Set it in this profile entry; the panel displays it but does not edit it. |
+| `allowedOrigins` | `[]` | Exact reverse-proxy origins, e.g. `["https://dsh.example.com"]`, including scheme and any non-default port. |
+
+Direct loopback/interface-IP access checks the actual request origin. Remote hostnames and reverse
+proxies require `allowedOrigins`; arbitrary Host names are not trusted, preventing DNS rebinding.
+Forwarded headers are not automatically trusted.
+Originless requests require a loopback peer. Completed repository listings are never cached: refresh
+queries Git again. Session/worktree records use session ids; the older directory-keyed cache is
+invalidated and rebuilt from each session log.
 
 The *Settings → Worktrees* page opens on one project, and resolves which one for you: the repository
 the active session is working in, or — when that is not a repository — the most recently used of your

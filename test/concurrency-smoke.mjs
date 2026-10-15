@@ -127,6 +127,14 @@ check('re-applying says there is nothing to do', /already patched|nothing to do/
 check('re-applying leaves bash byte-identical', readFileSync(bashFile, 'utf8') === bashPatched)
 check('re-applying leaves search byte-identical', readFileSync(searchFile, 'utf8') === searchPatched)
 
+// An earlier release's classifier must be replaced even when the hooks match.
+writeFileSync(installedClassifier, 'export const isReadOnlyCommand = () => true\n')
+const staleClassifier = run(['--check', ...targets])
+check('check detects an outdated classifier', staleClassifier.status === 2 && /outdated/.test(staleClassifier.stdout), staleClassifier.stdout)
+const upgrade = run(targets)
+check('reapplying upgrades an outdated classifier', upgrade.status === 0 && readFileSync(installedClassifier, 'utf8') === readFileSync(CLASSIFIER, 'utf8'))
+check('upgrading the classifier preserves the original core backup', readFileSync(`${bashFile}.orig`, 'utf8') === BASH_FIXTURE)
+
 // 4. A patched install is fully recognizable.
 const patched = run(['--check', ...targets])
 check('a patched package reports as patched', patched.status === 0, `exit ${patched.status}\n${patched.stdout}${patched.stderr}`)
@@ -162,14 +170,35 @@ const cases = [
   ['cat a.txt | grep -n foo | wc -l', true],
   ['cd /x && git status --short', true],
   ['git -C /x status -s', true],
-  ['grep -rn "foo" src --include=*.go | head -20', true],
+  ['grep -rn "foo" src --include="*.go" | head -20', true],
   ['ps aux | grep -i node', true],
-  ['curl -sS https://api.example.com/v1/models', true],
+  ['curl -sS https://api.example.com/v1/models', false],
   ['jq -r ".a.b" x.json', true],
-  ['docker ps --format {{.Names}}', true],
-  ['npm ls --depth=0', true],
+  ['docker ps --format {{.Names}}', false],
+  ['npm ls --depth=0', false],
   ['python3 --version', true],
   ['ls && cat f 2>&1 | head -3', true],
+  ["grep 'a|b' a.txt", true],
+  ['git log --oneline -5', true],
+  ['env rm scratch.txt', false],
+  ["printf -v 'arr[$(touch scratch.txt)]' x", false],
+  ["test -v 'arr[$(touch scratch.txt)]'", false],
+  ["sed 'w scratch.txt' a.txt", false],
+  ["awk 'BEGIN {system(\"touch scratch.txt\")}'", false],
+  ['git symbolic-ref HEAD refs/heads/other', false],
+  ['ls & rm scratch.txt', false],
+  ['ls 2>&1scratch.txt', false],
+  ['rg --pre=helper foo .', false],
+  ['rg --hostname-bin helper foo .', false],
+  ['git -c core.pager=helper log', false],
+  ['git log -p', false],
+  ['git show --textconv HEAD:a.txt', false],
+  ['uniq input.txt output.txt', false],
+  ['xxd -r input.txt output.bin', false],
+  ['/tmp/ls a.txt', false],
+  ['ls \"unterminated', false],
+  ['ls $EXTRA_FLAGS', false],
+  ['rg foo *', false],
   ['', false],
   ['rm -rf /tmp/x', false],
   ['echo hi > f.txt', false],
