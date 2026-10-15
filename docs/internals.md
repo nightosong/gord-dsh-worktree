@@ -340,6 +340,30 @@ Compare task success, elapsed time, model round trips, tool failures/retries, an
 output, reasoning and cached tokens. Claim performance gains only from repeated results at the same
 success standard. Repository tests do not call a real model.
 
+### Task attention tray
+
+Registers in the `shell.overlay` list slot and subscribes to `uiSession.sessionStatus`, `sessions.list`,
+the current chat binding and optional workspace summaries. Hosts without the unified status source do
+not mount it; old history timestamps never manufacture unread reminders. Checked against `0.2.0-rc.2`.
+
+The default anchor is 12px below the conversation's right-hand turn index, following chat/index/composer
+geometry. If the rail leaves insufficient space below, the trigger moves beside it without covering
+the index or composer. Dragging saves proportional coordinates within the chat bounds; the reset action
+restores the default anchor. Hover or focus opens the tray; leaving the combined trigger/panel closes it
+after 200ms, and Escape closes it. No candidates means no visible UI.
+
+Waiting interactions precede ended-but-unseen and running chats. Archived, blank and subagent chats, and
+already-viewed phases, are filtered; manual forks remain independent tasks. Navigation uses `uiWorkspace.openSession(id)` and confirms the
+target through the current binding before declaring success; it never creates a chat. Failure preserves
+the reminder. Opening a running chat dismisses that phase only: an unseen background stop or a new run
+can reappear. Opening through the normal sidebar also acknowledges the reminder. "Ended" means an
+observed stop, not guaranteed success. Unread state follows the client; restart recovery and cross-window
+read synchronization are not promised.
+
+It never calls Session `retain`, reads chat content or polls. Resident state contains candidate summaries
+and reminder identities. Expanded details render at most 20 rows per page and unmount when collapsed.
+Subscriptions, geometry observers, event listeners and hover/navigation timers are disposed on teardown.
+
 ### Concurrent read-only tool calls
 
 `dsh-agent-loop` runs a step's tool calls in parallel only when each call is classified concurrency-safe,
@@ -533,12 +557,13 @@ Because the host half is mounted as a bundle layer, host-side changes need a `ds
 changes reload with the GUI's normal module reload. The bundle patch is re-read on every session
 activation (`patchReload: live`), so a preset change there needs a new session rather than a restart.
 
-`npm test` runs six suites — the host one against a throwaway git repository, the client one
+`npm test` runs seven suites — the host one against a throwaway git repository, the client one
 against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), the
 sidebar patch tool against a copy of the **installed** DSH bundle, the concurrency patch tool against
 synthetic packages plus a read-only check of the installed core (proving pending → patched → idempotent →
 reverted, that an unrecognizable build writes nothing, and that the classifier keeps writers exclusive),
-the preset checks, and lifecycle regressions. Preset tests use the `js-yaml` development dependency to
+the preset checks, lifecycle regressions, and task tray state/navigation/hover/drag/pagination plus real
+Cordis mounting and disposal checks. Preset tests use the `js-yaml` development dependency to
 parse the actual configuration, validate mount structure, fourteen plugin rows and pruning budgets, and
 execute platform guards for simulated macOS/Linux/Windows. Broken YAML, duplicate keys/mounts and invalid
 expressions must fail. Prompt checks are static guardrails, not real-model evaluations. Version-range
@@ -550,7 +575,7 @@ The three tools, none of which is needed to *use* the plugin:
 
 | Script | What it does |
 | ------ | ------------ |
-| `npm test` | The five suites above. |
+| `npm test` | The seven suites above. |
 | `npm run patch:sidebar` / `unpatch:sidebar` | The sidebar's nested worktree grouping and double-click rename, patched into the installed browser bundle. |
 | `npm run patch:concurrency` / `unpatch:concurrency` / `check:concurrency` | Concurrent read-only `bash`/`glob`/`grep` calls, patched into the installed tool packages. |
 
