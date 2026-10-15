@@ -1,6 +1,6 @@
 {
   "name": "gord-dsh-worktree",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Git worktrees for DeepSeek Harness — isolate parallel work in its own directory and branch. Ships Fast mode (快速模式).",
   "keywords": [
     "dsh",
@@ -58,19 +58,23 @@
     "check:concurrency": "node tools/patch-concurrency.mjs --check"
   },
   "engines": {
-    "dsh": ">=0.1.5-rc.1 <0.2.0"
+    "dsh": "^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nightosong/gord-dsh-worktree.git"
   },
   "homepage": "https://github.com/nightosong/gord-dsh-worktree",
+  "devDependencies": {
+    "js-yaml": "^4.3.2",
+    "semver": "^7.8.5"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent-preset": ">=0.1.5-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-home-paths": ">=0.1.5-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-agent-preset": "^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0",
+    "@deepseek-ai/dsh-home-paths": "^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0",
+    "@deepseek-ai/dsh-settings": "^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0"
   },

@@ -1,134 +1,225 @@
 #!/usr/bin/env node
 /**
- * gord-dsh-worktree bundle-patch smoke test.
- *
- * Two things in `cordis.patch.yml` are load-bearing and neither fails loudly:
- * the row that mounts this plugin, and the `preset-fast` row that puts Fast mode
- * in the picker. A typo in either one leaves the plugin installed and the
- * feature missing, and the composition loader reports it as a warning at boot
- * rather than as a test failure. So this reads the file the loader reads and
- * checks the shape it needs:
- *
- *   • exactly one mount row for this plugin, under an `insert` list;
- *   • exactly one `@deepseek-ai/dsh-agent-preset` row, id `fast`, with the
- *     fourteen plugins Fast mode is defined by — no more, no fewer;
- *   • nothing personal in it: no absolute home path, no credential, and no
- *     `default:` here, because which preset a session starts in is the user's
- *     choice, not this plugin's;
- *   • the `!!js` expressions the Windows/WSL tool rows need are intact.
- *
- *   node test/preset-smoke.mjs
+ * Parse the shipped preset and reject broken compositions. Static policy checks
+ * are guardrails, not proof of real-model compliance or speed; see the docs for
+ * the model comparison. No plugins or host services are started by this suite.
  */
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { Script } from 'node:vm'
+import yaml from 'js-yaml'
+import semver from 'semver'
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const PATCH = join(ROOT, 'cordis.patch.yml')
+const source = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
-/** The plugins Fast mode is defined by, in order. */
-const PLUGINS = [
-  'persona',
-  'agent-instructions',
-  'tool-bash',
-  'tool-pwsh',
-  'tool-fs',
-  'tool-fs-search',
-  'tool-jobs',
-  'skill-filesystem',
-  'tool-skill',
-  'compaction',
-  'tool-ask-user',
-  'tool-todo',
-  'tool-web',
-  'present',
-]
-
+// Preserve !!js until the owning row activates. Compile now, and evaluate only
+// the repository's platform guards with the three simulated process.platforms.
+class Expression {
+  constructor(code) { this.script = new Script(`(${code})`) }
+  forPlatform(platform) {
+    return this.script.runInNewContext({ process: { platform } }, { timeout: 100 })
+  }
+}
+const schema = yaml.DEFAULT_SCHEMA.extend(new yaml.Type('tag:yaml.org,2002:js', {
+  kind: 'scalar', construct: (code) => new Expression(code),
+}))
 let failures = 0
 let checks = 0
-
-function check(label, condition, detail) {
+function check(label, run) {
   checks += 1
-  if (condition) {
+  try {
+    run()
     process.stdout.write(`ok   ${label}\n`)
-    return
+  } catch (error) {
+    failures += 1
+    process.stdout.write(`FAIL ${label}\n     ${error.message}\n`)
   }
-  failures += 1
-  process.stdout.write(`FAIL ${label}${detail === undefined ? '' : `\n     ${detail}`}\n`)
+}
+const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Expression)
+const nonempty = (value) => typeof value === 'string' && value.trim() !== ''
+
+/** Validate mountable rows recursively, including isolated child groups. */
+function validateRows(rows) {
+  assert.ok(Array.isArray(rows) && rows.length > 0, 'plugin rows must be a non-empty list')
+  const seen = new Set()
+  for (const row of rows) {
+    assert.ok(record(row) && nonempty(row.id) && nonempty(row.name), 'each plugin needs an id and package name')
+    assert.ok(!seen.has(row.id), `duplicate plugin id: ${row.id}`)
+    seen.add(row.id)
+    assert.ok(row.disabled === undefined || typeof row.disabled === 'boolean' || row.disabled instanceof Expression, 'disabled must be boolean or !!js')
+    if (row.name === 'cordis:group') {
+      assert.equal(row.group, true, 'a group must declare group: true')
+      assert.ok(record(row.isolate), 'a group must declare its isolation scope')
+      validateRows(row.config)
+    } else {
+      assert.ok(row.config === undefined || record(row.config), 'plugin config must be a mapping')
+    }
+  }
+}
+function parseBundle(text) {
+  const patch = yaml.load(text, { schema })
+  assert.ok(Array.isArray(patch) && patch.length > 0, 'bundle patch must be a list')
+  const rows = patch.flatMap((operation) => {
+    assert.ok(record(operation) && Object.keys(operation).length === 1 && Array.isArray(operation.insert), 'expected an insert operation')
+    return operation.insert
+  })
+  validateRows(rows)
+  const mounts = rows.filter((row) => row.name === 'gord-dsh-worktree')
+  assert.equal(mounts.length, 1, 'one worktree host mount is required')
+  assert.equal(mounts[0].id, 'gord-dsh-worktree')
+  const presets = rows.filter((row) => row.name === '@deepseek-ai/dsh-agent-preset')
+  assert.equal(presets.length, 1, 'one fast preset is required')
+  assert.equal(presets[0].id, 'preset-fast')
+  const preset = presets[0].config
+  assert.ok(record(preset), 'preset config must be a mapping')
+  assert.equal(preset.id, 'fast')
+  assert.ok(nonempty(preset.name) && nonempty(preset.description), 'preset needs display text')
+  assert.ok(Number.isFinite(preset.order), 'preset order must be numeric')
+  validateRows(preset.plugins)
+  return preset
 }
 
-const source = readFileSync(PATCH, 'utf8')
-const lines = source.split('\n')
+let preset
+check('the actual YAML parses as a mountable bundle composition', () => { preset = parseBundle(source) })
+if (!preset) process.exit(1)
+const plugins = preset.plugins
+const plugin = (id) => plugins.find((row) => row.id === id)
+const persona = plugin('persona')?.config
+const policy = persona?.suffix ?? ''
+const normalized = policy.replace(/\s+/g, ' ')
+const expected = [
+  ['persona', '@deepseek-ai/dsh-persona'],
+  ['agent-instructions', '@deepseek-ai/dsh-agent-instructions'],
+  ['tool-bash', '@deepseek-ai/dsh-tool-bash'],
+  ['tool-pwsh', '@deepseek-ai/dsh-tool-pwsh'],
+  ['tool-fs', '@deepseek-ai/dsh-tool-fs'],
+  ['tool-fs-search', '@deepseek-ai/dsh-tool-fs-search'],
+  ['tool-jobs', '@deepseek-ai/dsh-tool-jobs'],
+  ['skill-filesystem', '@deepseek-ai/dsh-skill-filesystem'],
+  ['tool-skill', '@deepseek-ai/dsh-tool-skill'],
+  ['compaction', 'cordis:group'],
+  ['tool-ask-user', '@deepseek-ai/dsh-tool-ask-user'],
+  ['tool-todo', '@deepseek-ai/dsh-tool-todo'],
+  ['tool-web', '@deepseek-ai/dsh-tool-web'],
+  ['present', '@deepseek-ai/dsh-tool-present'],
+]
+check('the fourteen rows use the intended plugin package names', () => {
+  assert.deepEqual(plugins.map(({ id, name }) => [id, name]), expected)
+})
+check('the picker keeps the fast preset name and ordering', () => {
+  assert.equal(preset.name, '快速模式')
+  assert.equal(preset.order, 0)
+})
+check('persona strings keep runtime model and directory placeholders', () => {
+  assert.ok(nonempty(persona.prefix) && nonempty(policy))
+  assert.ok(persona.prefix.includes('{{model}}') && policy.includes('{{cwd}}'))
+})
+for (const platform of ['darwin', 'linux', 'win32']) {
+  check(`${platform} activates exactly its native shell`, () => {
+    const bash = plugin('tool-bash').disabled
+    const pwsh = plugin('tool-pwsh').disabled
+    assert.ok(bash instanceof Expression && pwsh instanceof Expression)
+    assert.equal(bash.forPlatform(platform), platform === 'win32')
+    assert.equal(pwsh.forPlatform(platform), platform !== 'win32')
+  })
+}
+check('compaction keeps isolated services and a valid pruning budget', () => {
+  const group = plugin('compaction')
+  assert.deepEqual(group.isolate, { compaction: true, toolResultPruner: true })
+  assert.deepEqual(group.config.map((row) => row.name), [
+    '@deepseek-ai/dsh-compaction-basic', '@deepseek-ai/dsh-command-compact', '@deepseek-ai/dsh-compaction-tool-result-pruner',
+  ])
+  const { thresholdChars, headChars, tailChars } = group.config[2].config
+  assert.ok(Number.isInteger(thresholdChars) && thresholdChars > 0)
+  assert.ok(Number.isInteger(headChars) && headChars >= 0 && Number.isInteger(tailChars) && tailChars >= 0)
+  assert.ok(headChars + '\n\n[... tool result middle pruned ...]\n\n'.length + tailChars <= thresholdChars)
+})
+check('the preset does not choose a model or change the default preset', () => {
+  assert.ok(!/^\s*(?:default|model):/m.test(source))
+  assert.ok(!plugins.some((row) => /(?:llm-|agent-default-model)/.test(row.name)))
+})
+check('the patch contains no home paths or credential-looking values', () => {
+  assert.ok(!/\/(Users|home)\//.test(source) && !/\bsk-[A-Za-z0-9]{8}/.test(source))
+})
+check('the patch preserves LF formatting and one trailing newline', () => {
+  assert.ok(!/[\t\r]/.test(source))
+  assert.ok(source.endsWith('\n') && !source.endsWith('\n\n'))
+})
 
-// 1. The plugin still mounts itself.
-const mounts = lines.filter((line) => line === "      name: 'gord-dsh-worktree'")
-check('the bundle mounts this plugin exactly once', mounts.length === 1, `found ${mounts.length}`)
-check('the mount sits under an insert list', lines.includes('- insert:'))
+// npm's default prerelease rules apply to peers; widening only the stable upper
+// bound still excludes 0.2.0-rc.2. Exercise every published DSH constraint without
+// includePrerelease so the test matches what package managers actually accept.
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const dshRanges = [
+  ['engines.dsh', manifest.engines.dsh],
+  ...Object.entries(manifest.peerDependencies).filter(([name]) => name.startsWith('@deepseek-ai/dsh-')),
+]
+check('engine and all four DSH peers share a valid compatibility range', () => {
+  assert.equal(dshRanges.length, 5)
+  for (const [, range] of dshRanges) {
+    assert.ok(semver.validRange(range))
+    assert.equal(range, manifest.engines.dsh)
+  }
+})
+for (const version of ['0.1.5-rc.1', '0.1.5', '0.1.6-alpha.2', '0.1.6', '0.1.7-rc.2', '0.1.7', '0.1.9', '0.2.0-rc.2', '0.2.0-rc.3', '0.2.0', '0.2.1', '0.2.99']) {
+  check(`package managers accept supported DSH ${version}`, () => {
+    for (const [name, range] of dshRanges) assert.ok(semver.satisfies(version, range), `${name} rejects ${version}`)
+  })
+}
+for (const version of ['0.1.4', '0.1.5-rc.0', '0.2.1-rc.1', '0.3.0-alpha.1', '0.3.0-rc.2', '0.3.0', '1.0.0']) {
+  check(`package managers reject unqualified DSH ${version}`, () => {
+    for (const [name, range] of dshRanges) assert.ok(!semver.satisfies(version, range), `${name} unexpectedly accepts ${version}`)
+  })
+}
 
-// 2. Fast mode is declared once, with the right identity.
-const presetRows = lines.filter((line) => line === '    - id: preset-fast')
-check('the bundle declares preset-fast exactly once', presetRows.length === 1, `found ${presetRows.length}`)
-const start = lines.indexOf('    - id: preset-fast')
-const block = start === -1 ? [] : lines.slice(start)
-const field = (name) => block.find((line) => line.startsWith(`        ${name}:`))
-check('the preset is an agent-preset row', block[1] === "      name: '@deepseek-ai/dsh-agent-preset'", block[1])
-check('the preset id is fast', (field('id') ?? '').trim() === 'id: fast', field('id'))
-check('the preset is named 快速模式', (field('name') ?? '').includes('快速模式'), field('name'))
-check('the preset has a description', (field('description') ?? '').length > 20, field('description'))
-check('the preset sorts first in the picker', (field('order') ?? '').trim() === 'order: 0', field('order'))
+// Reject actual bad inputs rather than merely finding expected source strings.
+check('trailing invalid YAML is rejected instead of falsely passing', () => {
+  assert.throws(() => parseBundle(source + 'invalid: [\n'), yaml.YAMLException)
+})
+check('duplicate YAML mapping keys are rejected', () => {
+  assert.throws(() => parseBundle(source.replace('        id: fast', '        id: fast\n        id: other')), /duplicated mapping key/i)
+})
+check('a missing preset package field is rejected', () => {
+  assert.throws(() => parseBundle(source.replace("      name: '@deepseek-ai/dsh-agent-preset'", "      package: '@deepseek-ai/dsh-agent-preset'")), /package name/)
+})
+check('a duplicate preset mount is rejected', () => {
+  const fastInsert = source.slice(source.lastIndexOf('- insert:'))
+  assert.throws(() => parseBundle(source + fastInsert), /duplicate plugin id: preset-fast/)
+})
+check('a scalar plugin list is rejected', () => {
+  assert.throws(() => parseBundle(source.replace('        plugins:', '        plugins: false\n        misplacedPlugins:')), /plugin rows must be a non-empty list/)
+})
+check('invalid JavaScript guard syntax is rejected before activation', () => {
+  assert.throws(() => parseBundle(source.replace("process.platform === 'win32'", 'process.platform ===')), SyntaxError)
+})
 
-// 3. Its plugin list is exactly the fourteen rows Fast mode is.
-const ids = block.filter((line) => line.startsWith('          - id: ')).map((line) => line.replace('          - id: ', '').trim())
-check(`the preset lists ${PLUGINS.length} plugins`, ids.length === PLUGINS.length, `found ${ids.length}: ${ids.join(', ')}`)
-check('the plugin list matches', ids.join(' ') === PLUGINS.join(' '), ids.join(' '))
-check('the preset keeps compaction', ids.includes('compaction'))
-check('the preset carries the model-facing rows', ['tool-bash', 'tool-fs', 'tool-fs-search', 'tool-web', 'persona'].every((id) => ids.includes(id)))
-
-// 4. Nothing personal, nothing that would decide for the installing user.
-check('no absolute home path', !/\/(Users|home)\//.test(source))
-check('no credential-looking value', !/\bsk-[A-Za-z0-9]{8}/.test(source))
-check('no default preset choice', !/^\s*default:/m.test(source))
-check('no kloop anywhere', !/kloop/i.test(source))
-check('the Windows/WSL rows keep their !!js guards', (source.match(/!!js/g) ?? []).length === 2, String((source.match(/!!js/g) ?? []).length))
-
-// 5. Fast mode\'s defining behaviour: one pass, batching, no blocking waits.
-check('the persona states the round-trip rule', source.includes('Round trips are the scarce resource'))
-check('the persona forbids blocking waits', /Never wait inside the turn/.test(source))
-check('the persona asks once, up front', /ask it as your opening move/.test(source))
-check('the removed three-beat wording is gone', !/three-beat/.test(source))
-
-// The mistyped-request rule: make the agent reason about what was meant, and keep it free
-// of worked examples — naming one pair teaches that pair instead of the habit.
-check('the persona reads a request for what it means', source.includes('for what it means, not only for what it says'))
-check('the persona weighs a mistyped word instead of taking it literally', /wrong candidate\s+for the sound that was meant/.test(source))
-check('the mistyping mechanism covers dictation and half-typed words', /dictation/.test(source) && /left unconverted/.test(source))
-check('the trigger is that the request cannot be carried out as written', /cannot be carried out as written/.test(source))
-check('the trigger covers work that is already done', /step is\s+already done/.test(source))
-check('the persona says which reading it took', /say\s+in one line which reading you took/.test(source))
-check('a dropped negation is asked about rather than inferred', /never infer that one/.test(source))
-check('the persona still asks when no reading fits or the reading destroys', /Ask once up front when no reading fits/.test(source))
-check('a named path is searched for, never silently substituted', /find the nearest one that does and say which you/.test(source))
-check('the mistyping rule carries no worked word examples', !/擦拭|部属|侧室/.test(source))
-
-// The file-observation rule: a read the harness never saw does not license an edit, and a
-// failing call is not worth repeating verbatim.
-check('the persona requires a read-tool read before an edit', /read with the read tool before it is edited/.test(source))
-check('a file written by anything but the read tool counts as unread', /anything but the\s+read tool wrote it/.test(source))
-check('same-file calls are ordered rather than batched', /never a write beside an edit of that file/.test(source))
-check('a tool error is read and the call changed, not repeated', /never send the identical\s+failing call twice/.test(source))
-
-// Authorized boundary evaluation: do the engineering, never the content, and refuse the
-// crossing action without dropping the task around it.
-check('the persona frames authorized boundary evaluation as engineering', /Authorized boundary evaluation is engineering, not a content request/.test(source))
-check('a restricted case is an inert label or an existing fixture', /inert category label or an existing fixture/.test(source))
-check('reworded retries past a filter are forbidden', /Never generate, paraphrase, substitute, vary or\s+reword to get past a filter/.test(source))
-check('a refusal is recorded, not replayed or worked around', /reproduced from its trace id\s+instead of replayed/.test(source))
-check('one refused action does not take the task with it', /do not refuse the whole task, or the\s+steps after it/.test(source))
-
-// 6. Shape the loader needs: LF, no tabs, and a trailing newline.
-check('the file has no tab characters', !source.includes('\t'))
-check('the file ends with exactly one newline', source.endsWith('\n') && !source.endsWith('\n\n'))
-check('the file is not empty above the rows', lines.slice(0, 20).some((line) => line.startsWith('- insert:')))
+// Static policy contracts inspect only the parsed persona, never comments. These
+// cannot substitute for measuring the behavior of the selected model/provider.
+const requires = (label, ...patterns) => check(label, () => {
+  for (const pattern of patterns) assert.match(normalized, pattern)
+})
+requires('batching preserves dependency order and result inspection',
+  /batching independent reads/, /dependent operations sequential/, /Read every result, including exit codes/)
+requires('blocked jobs may wait with a timeout and must be collected',
+  /job_output with wait: true and a bounded timeout/, /collect relevant output and final status/, /still-running test is not a passed test/)
+requires('new ambiguity can be clarified while dependent actions pause',
+  /new ambiguity appears mid-run, ask then/, /pause dependent actions until answered/, /Never guess the target environment/)
+requires('typo handling preserves exact resources and destructive intent',
+  /IME, dictation and half-converted/, /negation may be missing/, /delete, overwrite, publish or send/, /do not substitute the nearest match/)
+requires('defect fixes may add focused regression tests',
+  /add or update a focused regression test/, /use existing checks for simple changes/, /Offer unrelated tests, docs and refactors/)
+requires('native edits reuse observed versions while external changes require rereading',
+  /read tool before its first edit/, /Successful native write\/edit tools update the observed version/,
+  /Reread affected content after shell commands, formatters, scripts or external processes change it/, /stale-version error/, /compaction removed needed context/)
+requires('answers stand alone and reviews do not trigger unrequested edits',
+  /final answer must stand alone/, /informational question or review, answer with evidence without making unrequested changes/)
+requires('transient failures allow bounded retries', /retry an unchanged call only for a transient failure, with a bounded retry count/)
+requires('authorized boundary evaluations preserve their content and refusal limits',
+  /inert category label or an existing fixture/, /Never generate, paraphrase, substitute, vary or reword to get past a filter/,
+  /reproduced from its trace id instead of replayed/, /do not refuse the whole task/)
+check('the conflicting absolute rules do not return', () => {
+  assert.doesNotMatch(normalized, /Never wait inside the turn|Never open a question in the middle|One pass per turn|Unrequested tests, docs, and refactors|never re-read what is already/)
+})
 
 process.stdout.write(`\n${checks - failures}/${checks} checks passed\n`)
-process.exit(failures === 0 ? 0 : 1)
+process.exitCode = failures === 0 ? 0 : 1
