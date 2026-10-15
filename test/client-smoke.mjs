@@ -467,6 +467,8 @@ const jumpCalls = []
 const createdWorkspaces = []
 const renamedWorkspaces = []
 const selectedPanels = []
+// Settings owns a modal store independently of layout's central-panel selection.
+const settingsShell = { open: true, closeCalls: 0 }
 let navigationFailure = ''
 let workspaceOpenGate
 let workspaceNavigationCancelled = false
@@ -775,7 +777,7 @@ async function settle(props, passes = 40) {
   return tree
 }
 
-const props = { t: (key, params) => {
+const props = { close: () => { settingsShell.open = false; settingsShell.closeCalls += 1 }, t: (key, params) => {
   const dict = bundle.DICT.zh
   let text = dict[key] ?? key
   for (const [name, value] of Object.entries(params ?? {})) text = text.split(`{${name}}`).join(String(value))
@@ -981,6 +983,7 @@ check('and does not need the host route for it', !calls.some((call) => call.acti
 // Navigating is the point: a worktree whose workspace already has a session must
 // land on that session rather than on a fresh one.
 check('opening lands on the session the workspace already has', jumpCalls.includes('open:s1'), JSON.stringify(jumpCalls))
+check('opening an existing session closes the independent Settings modal', !settingsShell.open && settingsShell.closeCalls === 1)
 // And it must not read as a registration that stopped short of navigating.
 check(
   'an opened row does not report a registration it did not stop at',
@@ -990,10 +993,12 @@ check(
 // The other branch: a workspace with no session of its own gets one.
 const openButtons = findAllByClass(adopted, 'gord-dsh-worktree-btn').filter((node) => textsOf(node).join('') === '打开会话')
 check('every row offers the one action', openButtons.length === 2, JSON.stringify(openButtons.length))
+settingsShell.open = true
 openButtons[1]?.props.onClick()
 await settle(props)
 check('a workspace with no session awaits native workspace navigation', jumpCalls.includes('workspace:w4') && !jumpCalls.some((item) => item.startsWith('start:')), JSON.stringify(jumpCalls))
-check('successful navigation closes Settings through the layout service', selectedPanels.length === 2 && selectedPanels.every((panel) => panel === null), JSON.stringify(selectedPanels))
+check('successful navigation reveals the Conversation through the layout service', selectedPanels.length === 2 && selectedPanels.every((panel) => panel === null), JSON.stringify(selectedPanels))
+check('opening a new session also closes the independent Settings modal', !settingsShell.open && settingsShell.closeCalls === 2)
 // The registry names a directory after itself, so a bare code has to be renamed
 // to read like the ones the composer creates.
 check(
@@ -1047,11 +1052,14 @@ check('catalog subscriptions are released after opening', workspaceListeners.siz
 
 navigationFailure = 'open blocked'
 const panelsBeforeFailure = selectedPanels.length
+settingsShell.open = true
+const closesBeforeFailure = settingsShell.closeCalls
 const settingsOpenButton = (tree) => findAllByClass(tree, 'gord-dsh-worktree-btn').filter((node) => textsOf(node).join('') === '打开会话')[1]
 settingsOpenButton(await settle(props))?.props.onClick()
 const failedOpen = await settle(props)
 check('a navigation failure remains visible in Settings', textsOf(failedOpen).join(' ').includes('open blocked'), textsOf(failedOpen).join(' ').slice(-200))
 check('a failed existing-session open neither closes Settings nor starts another session', selectedPanels.length === panelsBeforeFailure && jumpCalls.filter((value) => value.startsWith('workspace:')).length === startsBefore)
+check('failed navigation keeps the Settings modal open', settingsShell.open && settingsShell.closeCalls === closesBeforeFailure)
 navigationFailure = ''
 
 wtWorkspace.sessionIds = []
@@ -1060,22 +1068,25 @@ workspaceOpenGate = new Promise((resolve) => { completeWorkspaceOpen = resolve }
 const panelsBeforePending = selectedPanels.length
 settingsOpenButton(await settle(props))?.props.onClick()
 await settle(props)
-check('Settings stays open until asynchronous navigation completes', selectedPanels.length === panelsBeforePending)
+check('Settings stays open until asynchronous navigation completes', selectedPanels.length === panelsBeforePending && settingsShell.open && settingsShell.closeCalls === closesBeforeFailure)
 completeWorkspaceOpen()
 workspaceOpenGate = undefined
 await settle(props)
-check('Settings closes after asynchronous navigation succeeds', selectedPanels.length === panelsBeforePending + 1)
+check('Settings closes after asynchronous navigation succeeds', selectedPanels.length === panelsBeforePending + 1 && !settingsShell.open && settingsShell.closeCalls === closesBeforeFailure + 1)
 navigationFailure = 'create failed'
+settingsShell.open = true
 settingsOpenButton(await settle(props))?.props.onClick()
 const failedCreate = await settle(props)
 check('new-session failures are awaited and displayed', textsOf(failedCreate).join(' ').includes('create failed'))
 check('failed creation does not close Settings or call fire-and-forget startSession', selectedPanels.length === panelsBeforePending + 1 && !jumpCalls.some((value) => value.startsWith('start:')))
+check('failed creation keeps the Settings modal open', settingsShell.open && settingsShell.closeCalls === closesBeforeFailure + 1)
 navigationFailure = ''
 workspaceSnapshot.archivedSessionIds = []
 workspaceNavigationCancelled = true
 const panelsBeforeSuperseded = selectedPanels.length
 check('superseded navigation is not reported as a successful jump', await openSettingsWorktree() === false)
 check('superseded navigation cannot close a newer panel', selectedPanels.length === panelsBeforeSuperseded)
+check('superseded navigation cannot close the Settings modal', settingsShell.open && settingsShell.closeCalls === closesBeforeFailure + 1)
 workspaceNavigationCancelled = false
 
 const navigationService = root.get('uiWorkspace')
@@ -1091,8 +1102,12 @@ wtWorkspace.sessionIds = ['old-chat']
 await openSettingsWorktree()
 check('older controllers also restore an existing session without creating one',
   createdSessions.length === legacyCreatedBefore + 1 && openedSessions.at(-1) === 'old-chat')
+check('older controllers also close Settings after restoring history', !settingsShell.open)
 navigationService.openWorkspace = nativeOpenWorkspace
 navigationService.openSession = nativeOpenSession
+const closesBeforeLegacyShell = settingsShell.closeCalls
+check('a legacy Settings shell without a close callback still opens history',
+  await Section({ t: props.t }).props.openWorktree(wtWorkspace.path, 'app') === true && settingsShell.closeCalls === closesBeforeLegacyShell)
 workspaceSnapshot.state = 'error'
 let catalogFailure
 try { await openSettingsWorktree() } catch (error) { catalogFailure = error }
