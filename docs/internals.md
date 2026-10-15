@@ -59,10 +59,12 @@ npm run patch:concurrency     # --check to inspect first, --revert to undo
 It needs a `dsh web` restart, and it is idempotent — run it again after any DSH upgrade, which restores
 the files it edits.
 
-Supports dsh `>=0.1.5-rc.1 <0.2.0` — the whole 0.1.x line from `0.1.5-rc.1` on. Three of them are
-tested: `0.1.5-rc.1`, `0.1.6-alpha.2` and `0.1.7-rc.2`. Glyph export names, session navigation and the
-plugin settings interface all changed across that span, and the plugin handles each shape — see
-*Across DSH versions* below.
+`engines.dsh` and the four DSH peers share `^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0`. This
+keeps stable 0.1.x from `0.1.5`, adds stable 0.2.x, and explicitly accepts prereleases on those opted-in
+bases, including desktop `0.2.0-rc.2`. Raising a stable upper bound alone does not admit a new prerelease
+base. Other prerelease bases and 0.3.x remain excluded. Earlier tested builds are `0.1.5-rc.1`,
+`0.1.6-alpha.2` and `0.1.7-rc.2`; the wider declaration does not imply complete testing of every later
+build. See *Across DSH versions* for the older interface fallbacks.
 
 Two features added in 0.3.0 need more than that floor does, so the minimum is per feature rather than per
 package:
@@ -303,18 +305,40 @@ heavy orchestration surfaces (no plan mode, no goals, no subagents, no workflows
 rows instead of 31 tools: shell, files, search, web, skills, todos, background jobs, user questions, and
 context compaction.
 
-What its persona adds is measured, not stylistic. Session logs on real work showed 30–150 model round
-trips per turn at 6–12 s each, `bash` making up 81–94% of all tool calls, and roughly a third of the
-steps that call tools already batch two of them. So the preset's rules are: recon the facts that decide
-the answer and then answer or execute in the *same* turn; send independent actions in one round; never
-open a question mid-run (ask once, as the opening move); never wait inside the turn — a build, a sweep or
-a long query goes to a background job; keep the context small, because it is re-sent on every step; and
-skip the survey that cannot change the conclusion.
+Earlier session observations showed many model round trips, motivating independent-call batching and
+narrow searches and output. Those observations are not a speed comparison for this revision. The agent
+works through inspect → act → verify, revisiting decisions when evidence requires it. Material ambiguity
+discovered mid-run can trigger clarification, with dependent actions paused. Long commands can run in
+the background while independent work continues. When blocked with no independent work left, bounded
+`job_output(wait: true)` is allowed. Collect relevant output and final status before reporting completion.
+
+Read an existing file before its first edit. Successful native `write`/`edit` updates the observed version,
+so known content can be reused. Reread after shell commands, formatters, scripts or external changes, on
+stale versions, or when compaction removed needed context. Defect fixes may add focused regression tests;
+simple changes can use existing checks. Final answers include outcomes, verification and limits without
+requiring the user to expand tool logs.
 
 It deliberately picks no model. A preset row is composition, not configuration: this one carries no
 `llm-*` and no `agent-default-model` row, and no `model` field — Fast mode runs on whatever model the
 profile configures, so the same preset works for every user. The only reference to a model is the
 persona's `{{model}}` placeholder, which merely names the configured model so the agent knows what it is.
+
+Configuration and prompt checks cannot prove model compliance or speed. Compare standard and fast with
+the same DeepSeek model, endpoint, reasoning settings, starting code and tasks, using separate fresh
+sessions and identical code copies. Repeat each task and record whether the cache is warm. Cover at least:
+
+| Task | Acceptance condition |
+| ---- | -------------------- |
+| Simple query or review | Correct answer without unrequested edits |
+| Waiting for tests | Final exit status collected; starting a job is not a passing result |
+| Environment ambiguity discovered after inspection | Clarification before dependent actions; no guessed environment |
+| Consecutive native edits, then external formatting | No ceremonial reread after native edits; reread after external changes |
+| Defect fix | Original failure covered and fix verified |
+| Transient tool failures and long-session compaction | Bounded retries and recovery of needed context |
+
+Compare task success, elapsed time, model round trips, tool failures/retries, and provider-reported input,
+output, reasoning and cached tokens. Claim performance gains only from repeated results at the same
+success standard. Repository tests do not call a real model.
 
 ### Concurrent read-only tool calls
 
@@ -509,13 +533,18 @@ Because the host half is mounted as a bundle layer, host-side changes need a `ds
 changes reload with the GUI's normal module reload. The bundle patch is re-read on every session
 activation (`patchReload: live`), so a preset change there needs a new session rather than a restart.
 
-`npm test` runs five smoke suites — the host one against a throwaway git repository, the client one
+`npm test` runs six suites — the host one against a throwaway git repository, the client one
 against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), the
 sidebar patch tool against a copy of the **installed** DSH bundle, the concurrency patch tool against
 synthetic packages plus a read-only check of the installed core (proving pending → patched → idempotent →
 reverted, that an unrecognizable build writes nothing, and that the classifier keeps writers exclusive),
-and the bundle patch's own shape (one mount row, one `preset-fast` with exactly the fourteen plugins, no
-personal data) — with no test framework to install.
+the preset checks, and lifecycle regressions. Preset tests use the `js-yaml` development dependency to
+parse the actual configuration, validate mount structure, fourteen plugin rows and pruning budgets, and
+execute platform guards for simulated macOS/Linux/Windows. Broken YAML, duplicate keys/mounts and invalid
+expressions must fail. Prompt checks are static guardrails, not real-model evaluations. Version-range
+checks use the `semver` development dependency with package-manager defaults, covering older builds,
+`0.2.0-rc.2`, stable 0.2.x and excluded boundary releases without `includePrerelease`. No test framework
+is required.
 
 The three tools, none of which is needed to *use* the plugin:
 

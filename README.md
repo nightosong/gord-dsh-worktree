@@ -18,12 +18,12 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 4. **Manage archived sessions** — *Settings → Worktrees* lists every session archived on this machine, with
    **Unarchive** per row, a delete icon, and **Delete all** for the set.
 5. **Double-click to rename** — rename a session from its sidebar row, without the menu.
-6. **Fast mode (快速模式)** — a slim agent preset that ships in the bundle patch, so the preset picker has it
-   as soon as the plugin is installed. It reads a request for what it means rather than for what it says:
-   when the words cannot be carried out as written, it takes the reading the context supports and says which
-   one — and asks instead when the reading would reverse the request or the named path does not exist. It
-   reads a file before editing it, and treats an authorized boundary evaluation on your own endpoint as
-   engineering to run rather than a subject to refuse.
+6. **Fast mode (快速模式)** — a slim agent preset available in the picker after installation. It batches
+   independent calls while preserving necessary clarification, bounded waits and focused regression tests;
+   relevant background results must be collected before reporting completion. It interprets obvious input
+   errors using context without substituting named paths or resources. It reads before the first edit,
+   reuses known versions after native edits, and rereads after external changes. Authorized boundary
+   evaluations on your own endpoint remain engineering tasks with their content and refusal limits intact.
 7. **Concurrent read-only tool calls** — an opt-in patch for `bash`, `glob` and `grep`, so a step that
    batches reads overlaps them instead of running them one after another.
 8. **Session hover card** — hovering a session names the workspace it runs in at the top (the workspace
@@ -102,9 +102,11 @@ For a remote hostname or a reverse proxy, configure exact public origins in
 
 ## Across DSH versions
 
-Supports dsh `>=0.1.5-rc.1 <0.2.0` — the whole 0.1.x line from `0.1.5-rc.1` on. Three of them are tested:
-`0.1.5-rc.1`, `0.1.6-alpha.2` and `0.1.7-rc.2`. Glyph export names, session navigation and the plugin
-settings interface all changed across that span, and the plugin handles each shape:
+The declared range covers stable 0.1.x releases from `0.1.5` and stable 0.2.x, plus explicit prerelease
+opt-ins for `0.1.5` from `rc.1`, `0.1.6`, `0.1.7` and `0.2.0`, including desktop `0.2.0-rc.2`. Other
+prerelease bases and 0.3.x are excluded. Earlier tested builds include `0.1.5-rc.1`, `0.1.6-alpha.2` and
+`0.1.7-rc.2`; widening metadata does not mean every later build has been fully tested. Glyph export
+names, session navigation and plugin settings changed across the earlier builds, with these fallbacks:
 
 | Interface | 0.1.5 / 0.1.6 | 0.1.7 on | What the plugin does |
 | --------- | ------------- | -------- | -------------------- |
