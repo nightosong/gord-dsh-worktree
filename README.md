@@ -2,7 +2,8 @@
 
 Git worktree management for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — isolate
 parallel work in its own directory and branch. It also ships **Fast mode (快速模式)** as an agent preset
-and an opt-in patch that lets read-only tool calls run concurrently.
+and an opt-in patch that lets read-only tool calls run concurrently. A lightweight **task attention tray**
+keeps running and unseen chats within reach.
 
 [中文说明](README.zh.md) · [Long-form notes](docs/internals.md)
 
@@ -29,10 +30,47 @@ and an opt-in patch that lets read-only tool calls run concurrently.
 8. **Session hover card** — hovering a session names the workspace it runs in at the top (the workspace
    title: `checkout-service`, or `checkout-service · ed466e1a` for a worktree of it) with the branch of its
    below.
+9. **Task attention tray** — floats below the conversation's right-hand turn index. Hover to see running,
+   waiting and ended-but-unseen chats; opening a chat successfully dismisses that phase's reminder. The
+   main number is the task total; the badge counts waiting and unseen tasks. Drag
+   to remember a position, reset to the index, and leave to close after 200ms. It reuses status subscriptions
+   without polling or loading chat content. Requires `uiSession.sessionStatus` (checked on `0.2.0-rc.2`);
+   hosts without that capability do not show the tray.
 
 ![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
 
 ![The Worktrees settings page: the worktree list with its actions and the archived-sessions card](docs/images/settings-worktrees.png)
+
+## Task attention tray · new in 0.6.0
+
+Keep an eye on parallel chats without opening each one. The blue button sits below the conversation's
+right-hand turn index; hover to expand the list and move away to close it. With no tasks to show, it hides.
+
+| Indicator | Meaning |
+| --------- | ------- |
+| Main number | Chats currently included in the tray |
+| Small badge | Waiting chats plus ended-but-unseen chats |
+| Needs attention | A chat is waiting for input or approval |
+| Ended, unseen | A run has stopped and you have not viewed it; this does not indicate success |
+| Running | A background chat is working |
+
+Click a row to open its existing chat. A reminder disappears only after navigation succeeds; viewing a
+chat through the sidebar also acknowledges it. A later completion, new run or new request can appear
+again. Drag the button to save a position on this device; **↺** returns it below the turn index. On a crowded
+screen, it moves beside the index and keeps clear of the message composer.
+
+The tray reuses native status subscriptions: no polling, chat-log loading or animated effects. Closed
+panels do not render rows; open panels show at most 20 rows per page. These choices keep background work
+small, but do not constitute a measured memory benchmark. Reminders reflect the current window's native
+status; they are not a persistent or cross-window notification inbox. Requires `uiSession.sessionStatus`
+(checked on `0.2.0-rc.2`); older hosts without this capability keep the other plugin features.
+
+The images below render the actual plugin component with **simulated sessions**, rather than a live DSH
+session. The first shows the button and badge; the second shows the expanded task list.
+
+![Task tray collapsed: five tasks in total and three waiting or unseen](docs/images/task-attention-collapsed.jpg)
+
+![Task tray expanded: waiting, ended-but-unseen and running chats, with a position-reset button](docs/images/task-attention-expanded.jpg)
 
 ## Where worktrees live
 
@@ -65,6 +103,12 @@ because that row is the only way to reach its own `+` and `…` actions. It is d
 itself is untouched, and unchecking the box brings every line back.
 
 ## Install
+
+```sh
+dsh plugin --profile web add gord-dsh-worktree@0.6.0
+```
+
+Or install from GitHub:
 
 ```sh
 dsh plugin --profile web add github:nightosong/gord-dsh-worktree
