@@ -29,6 +29,10 @@
 
 ## 工作树建在哪里
 
+默认创建独立的 `worktree/<code>` 分支，从当前 `HEAD` 开始；游离 HEAD 也支持。已被其它工作树检出的分支
+会被拒绝。旧版本已创建的共享分支工作树保留原样，继续并行开发前应各自切换到独立分支。删除安全检查包含
+被 Git 忽略的文件（例如 `.env`），需要明确勾选丢弃后才能删除。
+
 工作树建在**自己项目内部**：`<项目>/.dsh/worktrees/<code>`。目录真的在项目里，侧栏才能把它折进该项目；
 同时它不会给项目的 `git status` 与 diff 添乱——插件把 `/.dsh/worktrees/` 写进了该仓库自己的
 `.git/info/exclude`。想放到别处，可以在插件配置里设 `defaultParent`。
@@ -73,7 +77,11 @@ npm run patch:concurrency     # 先 --check 看状态，--revert 还原
 它需要重启 `dsh web`，可重复执行，而且**故意保持手动**：它改的是 `dsh-tool-bash` 与
 `dsh-tool-fs-search`，而桌面端的签名包永远装不了这两个补丁——不自动打它，两个宿主对只读调用的调度才是
 一致的。DSH 升级会覆盖这些文件，升级后重跑一次即可，用 `npm run check:concurrency` 看状态：`patched`、
-`original`，或构建已变时的 `unknown`——那时工具会拒绝强改，只报告。
+`original`、分类器需更新时的 `outdated`，或构建已变时的 `unknown`——那时工具会拒绝强改，只报告。
+已启用过并发补丁的安装也需要重跑一次，以更新分类器。
+
+通过远程域名或反向代理访问时，在插件配置中设置完整来源白名单
+`allowedOrigins: ["https://dsh.example.com"]`。直接通过 IP 访问时校验请求实际主机和端口。
 
 ## 跨版本兼容
 

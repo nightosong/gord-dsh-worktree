@@ -159,7 +159,11 @@ function inspect(tool) {
     status: source.includes(row.marker) ? 'patched' : row.already.test(source) ? 'patched-unmarked' : source.includes(row.original) ? 'original' : 'unknown',
   }))
   const classifierTarget = tool.classifier === undefined ? undefined : join(directory, ...tool.classifier)
-  const classifier = tool.classifier === undefined ? undefined : { target: classifierTarget, present: existsSync(classifierTarget) }
+  const classifier = tool.classifier === undefined ? undefined : {
+    target: classifierTarget,
+    present: existsSync(classifierTarget),
+    current: existsSync(classifierTarget) && readFileSync(classifierTarget, 'utf8') === readFileSync(CLASSIFIER, 'utf8'),
+  }
   return { tool, directory, file, source, rows: classified, classifier, backup: `${file}.orig` }
 }
 
@@ -191,8 +195,8 @@ if (flag('--check')) {
       process.stdout.write(`${row.status.padEnd(17)} ${row.row.what}${describe(row)}\n`)
     }
     if (entry.classifier !== undefined) {
-      const status = entry.classifier.present ? 'patched' : 'original'
-      if (status === 'original') pending += 1
+      const status = entry.classifier.current ? 'patched' : entry.classifier.present ? 'outdated' : 'original'
+      if (status !== 'patched') pending += 1
       process.stdout.write(`${status.padEnd(17)} bash: lib/read-only-command.js is installed\n`)
     }
     process.stdout.write(`${entry.file}\n`)
@@ -252,7 +256,7 @@ function replaceOnce(source, original, patched, what) {
 let changed = 0
 for (const entry of inspections) {
   const pending = entry.rows.filter((row) => row.status === 'original')
-  const installClassifier = entry.classifier !== undefined && !entry.classifier.present
+  const installClassifier = entry.classifier !== undefined && !entry.classifier.current
   if (pending.length === 0 && !installClassifier) {
     process.stdout.write(`already patched: ${entry.file}\n`)
     continue

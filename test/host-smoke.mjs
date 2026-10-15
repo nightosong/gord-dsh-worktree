@@ -165,8 +165,7 @@ try {
 
   // Naming the branch again gets a fresh directory — the code is per checkout —
   // so what refuses this is git, not a path collision: the branch is already
-  // checked out in the worktree above. Only a copy of the *current* branch is
-  // forced through that check, because sharing it is what that copy is for.
+  // checked out in the worktree above. Even force must not bypass branch ownership.
   const reused = await service.createWorktree({ dir: repo, branch: 'worktree/feature-a', base: 'main' })
   check('create refuses a named branch already checked out', reused.ok === false && reused.error === 'git-failed', JSON.stringify(reused))
 
@@ -613,6 +612,7 @@ try {
     req.url = `/gord-dsh-worktree/api?action=${action}`
     req.method = 'POST'
     req.headers = {}
+    req.socket = { remoteAddress: '127.0.0.1' }
     let parsed
     const res = { writeHead() {}, end(text) { parsed = JSON.parse(text) } }
     await apiHandler(req, res)
@@ -754,32 +754,21 @@ try {
   const plain = await service.createWorktree({ dir: freshClone('plain'), branch: 'feat/mine', base: 'main', path: join(scratch, 'wt-plain') })
   check('a normal new branch reports no remote noise', plain.pickedUpRemote === undefined && plain.shadowedRemote === undefined)
 
-  // Naming no branch is what the composer's chip does, and it means a copy of
-  // what the project is on — the branch it has checked out, upstream and all —
-  // not a new line of work under a generated name. A fresh clone is on `main`
-  // tracking `origin/main`, so that is the shape being checked.
+  // The composer must create a branch of its own, leaving the project's HEAD
+  // and index untouched when another session commits in the new checkout.
   const copyRepo = freshClone('copy')
   const copy = await service.createWorktree({ dir: copyRepo, path: join(scratch, 'wt-copy') })
   check(
-    'a worktree made with no branch checks out the project branch',
-    copy.ok === true && copy.branch === 'main' && copy.createdBranch === false,
+    'a worktree made with no branch owns an independent branch',
+    copy.ok === true && /^worktree\/[0-9a-f]{8}$/.test(copy.branch) && copy.createdBranch === true,
     JSON.stringify(copy),
   )
-  check(
-    'the copy holds the branch, upstream included',
-    git(copy.path, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}') === 'origin/main',
-    git(copy.path, 'rev-parse', '--abbrev-ref', 'HEAD'),
-  )
   const copyList = await service.listWorktrees(copyRepo)
+  check('new worktrees never share a checked-out branch', copyList.worktrees.every((entry) => entry.branchShared === false))
+  const copyOut = await service.removeWorktree({ dir: copyRepo, path: copy.path, deleteBranch: true })
   check(
-    'rows say when one branch is held by more than one checkout',
-    copyList.worktrees.filter((entry) => entry.branchShared === true).length === 2,
-    JSON.stringify(copyList.worktrees.map((entry) => [entry.branch, entry.branchShared])),
-  )
-  const copyOut = await service.removeWorktree({ dir: copyRepo, path: copy.path, force: true, deleteBranch: true })
-  check(
-    'removing a copy never deletes the branch it shares',
-    copyOut.ok === true && copyOut.branchDeleted === false && copyOut.branchShared === true,
+    'removing an independent checkout can delete its own branch',
+    copyOut.ok === true && copyOut.branchDeleted === true && copyOut.branchShared === false,
     JSON.stringify(copyOut),
   )
   check(
@@ -1233,7 +1222,7 @@ try {
   // worktree, because the ones above have been taken away again by now.
   const moved = await service.createWorktree({ dir: repo, branch: 'worktree/session-moved' })
   check('a worktree to work in is created', moved.ok === true && existsSync(moved.path), JSON.stringify(moved))
-  await archive.rememberSessionWorktree(repo, moved.path)
+  await archive.rememberSessionWorktree('session-1', moved.path)
   const viaWorktree = await callApi('branch', { dir: repo, sessionId: 'session-1' })
   check(
     'the branch route follows the worktree the session works in',
@@ -1254,14 +1243,14 @@ try {
   check('a session with no record is read from its log', backfilled === moved.path, `${backfilled} vs ${moved.path}`)
   check(
     'and the answer is written down',
-    (await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-backfill'] === moved.path,
+    (await archive.readSessionWorktreeRecord()).worktrees['session-backfill'] === moved.path,
     JSON.stringify((await archive.readSessionWorktreeRecord()).worktrees),
   )
   check(
     'a session whose log shows no worktree is remembered as looked at',
     (await archive.sessionWorktree('/tmp/project-noworktree', 'session-quiet')) === '' &&
-      (await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-noworktree'] === '',
-    JSON.stringify((await archive.readSessionWorktreeRecord()).worktrees['/tmp/project-noworktree']),
+      (await archive.readSessionWorktreeRecord()).worktrees['session-quiet'] === '',
+    JSON.stringify((await archive.readSessionWorktreeRecord()).worktrees['session-quiet']),
   )
 
   const branchMiss = await callApi('branch', { dir: scratch })
