@@ -59,9 +59,9 @@ npm run patch:concurrency     # --check to inspect first, --revert to undo
 It needs a `dsh web` restart, and it is idempotent — run it again after any DSH upgrade, which restores
 the files it edits.
 
-`engines.dsh` and the four DSH peers share `^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0`. This
+`engines.dsh` and the four DSH peers share `^0.1.5-rc.1 || ^0.1.6-0 || ^0.1.7-0 || ^0.2.0-0 || ^0.2.1-0 || ^0.2.2-0`. This
 keeps stable 0.1.x from `0.1.5`, adds stable 0.2.x, and explicitly accepts prereleases on those opted-in
-bases, including desktop `0.2.0-rc.2`. Raising a stable upper bound alone does not admit a new prerelease
+bases, including desktop `0.2.0-rc.2`, `0.2.1-rc.5` and `0.2.2-rc.1`. Raising a stable upper bound alone does not admit a new prerelease
 base. Other prerelease bases and 0.3.x remain excluded. Earlier tested builds are `0.1.5-rc.1`,
 `0.1.6-alpha.2` and `0.1.7-rc.2`; the wider declaration does not imply complete testing of every later
 build. See *Across DSH versions* for the older interface fallbacks.
@@ -557,7 +557,13 @@ Because the host half is mounted as a bundle layer, host-side changes need a `ds
 changes reload with the GUI's normal module reload. The bundle patch is re-read on every session
 activation (`patchReload: live`), so a preset change there needs a new session rather than a restart.
 
-`npm test` runs seven suites — the host one against a throwaway git repository, the client one
+`npm run test:compat -- --modules /path/to/dsh/node_modules` copies the project into a temporary
+directory and runs all suites with only the selected host's dependencies. The directory suite mounts
+real native directory, Session and projection services on newer hosts; older hosts verify the legacy
+fallback. No installed host file is patched. Archive cache reads use `cachedSnapshot(header, keys)`
+with only the required projection keys.
+
+`npm test` runs eight suites — the host one against a throwaway git repository, the client one
 against a minimal React runtime (covering all three glyph naming schemes and both navigation paths), the
 sidebar patch tool against a copy of the **installed** DSH bundle, the concurrency patch tool against
 synthetic packages plus a read-only check of the installed core (proving pending → patched → idempotent →
@@ -568,14 +574,15 @@ parse the actual configuration, validate mount structure, fourteen plugin rows a
 execute platform guards for simulated macOS/Linux/Windows. Broken YAML, duplicate keys/mounts and invalid
 expressions must fail. Prompt checks are static guardrails, not real-model evaluations. Version-range
 checks use the `semver` development dependency with package-manager defaults, covering older builds,
-`0.2.0-rc.2`, stable 0.2.x and excluded boundary releases without `includePrerelease`. No test framework
+`0.2.0-rc.2`, `0.2.1-rc.5`, `0.2.2-rc.1`, stable 0.2.x and excluded boundary releases without `includePrerelease`. No test framework
 is required.
 
 The three tools, none of which is needed to *use* the plugin:
 
 | Script | What it does |
 | ------ | ------------ |
-| `npm test` | The seven suites above. |
+| `npm test` | The eight suites above. |
+| `npm run test:compat -- --modules /path/to/dsh/node_modules` | Run all suites with an explicitly selected DSH dependency tree in a temporary project. |
 | `npm run patch:sidebar` / `unpatch:sidebar` | The sidebar's nested worktree grouping and double-click rename, patched into the installed browser bundle. |
 | `npm run patch:concurrency` / `unpatch:concurrency` / `check:concurrency` | Concurrent read-only `bash`/`glob`/`grep` calls, patched into the installed tool packages. |
 

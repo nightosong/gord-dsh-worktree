@@ -1086,7 +1086,10 @@ try {
     registry: fakeRegistry(ids),
     now: () => 1,
     persistence: { list: async () => [{ header: { id: 'session-kept', cwd: '/tmp/project', createdAt: 42 } }] },
-    cache: { cachedSnapshot: () => ({ values: { title: 'a title from the cache' } }) },
+    cache: { cachedSnapshot: (_header, keys) => {
+      if (!Array.isArray(keys) || keys.join() !== 'title') throw new Error('expected the title-only cache API')
+      return { values: { title: 'a title from the cache' } }
+    } },
   })
   const archivedList = await archive.listArchived(listingDeps(['session-kept', 'session-gone']))
   check('the listing reports the archived session', archivedList.ok === true && archivedList.records.length === 1, JSON.stringify(archivedList))

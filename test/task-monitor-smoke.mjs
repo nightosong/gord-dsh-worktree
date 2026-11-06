@@ -158,6 +158,13 @@ await check('token-stream timestamp changes do not publish new tray snapshots', 
   list.set({ ...list.getSnapshot(), byId: { ...list.getSnapshot().byId, run: { ...list.getSnapshot().byId.run, updatedAt: 12345 } } })
   assert.equal(store.getSnapshot(), before)
 })
+await check('task labels follow native directory projections and retain the legacy fallback', () => {
+  const before = list.getSnapshot()
+  list.set({ ...before, byId: { ...before.byId, run: { ...before.byId.run, projectionValues: { workingDirectory: '/repo/changed-project' } } } })
+  assert.equal(find('run').project, 'changed-project')
+  list.set(before)
+  assert.equal(find('run').project, 'My project')
+})
 await check('a failed open keeps the notification and never creates a chat', async () => {
   navigation = () => { throw new Error('writer unavailable') }
   const row = find('done')
