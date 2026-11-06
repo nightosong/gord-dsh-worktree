@@ -1685,6 +1685,16 @@ const noSessionTree = await settleDiff({ t: props.t, sessionId: 'missing', useSe
 check('a session without a directory fetches nothing', calls.filter((call) => call.action === 'diff').length === beforeNoSession)
 check('a session without a directory still renders', textsOf(noSessionTree).join(' ').includes('读取改动…'), textsOf(noSessionTree).join(' ').slice(0, 160))
 
+sessionList.byId.s1.projectionValues = { workingDirectory: '/tmp/demo/other' }
+mountDiff()
+await settleDiff(diffProps)
+check('Changes reads the native working-directory projection before the original cwd', calls.filter((call) => call.action === 'diff').at(-1)?.body.dir === '/tmp/demo/other')
+check('settings resolves the effective session directory', Section(props).props.sessionDir === '/tmp/demo/other')
+sessionList.byId.s1.projectionValues = { workingDirectory: null }
+await settleDiff(diffProps)
+check('a missing directory projection falls back to the original cwd', calls.filter((call) => call.action === 'diff').at(-1)?.body.dir === '/tmp/demo/app')
+delete sessionList.byId.s1.projectionValues
+
 process.stdout.write('\nsettings: archived sessions\n')
 
 /** The same `YYYY-MM-DD HH:mm` the panel renders, in this machine's zone. */
@@ -2304,6 +2314,27 @@ check(
   Array.isArray(globalThis.window.listeners.focus) && globalThis.window.listeners.focus.length > 0,
   JSON.stringify(Object.keys(globalThis.window.listeners)),
 )
+
+sessionList.byId.s1.projectionValues = { workingDirectory: '/tmp/demo/other' }
+for (const listener of sessionUpdates) listener()
+await renderHover(withNavigation.hover, 's1')
+check('hover branch metadata follows native directory changes', calls.filter((call) => call.action === 'branch').at(-1)?.body.dir === '/tmp/demo/other')
+delete sessionList.byId.s1.projectionValues
+
+// A newer blank-session projection may differ from its immutable creation cwd.
+slots = []
+cleanups = {}
+const movedBlank = { ...blankSession, projectionValues: { workingDirectory: '/tmp/demo/other' } }
+findByClass(await renderChip(40, movedBlank), 'gord-dsh-worktree-seat')?.props.onClick()
+await renderChip(40, movedBlank)
+check('the composer worktree picker loads the effective directory', calls.filter((call) => call.action === 'list').at(-1)?.body.dir === '/tmp/demo/other')
+sessionList.byId.s1.projectionValues = { workingDirectory: '/tmp/demo/other' }
+slots = []
+cleanups = {}
+findByClass(await renderChip(), 'gord-dsh-worktree-seat')?.props.onClick()
+await renderChip()
+check('a newer catalog projection supersedes stale composer slot props', calls.filter((call) => call.action === 'list').at(-1)?.body.dir === '/tmp/demo/other')
+delete sessionList.byId.s1.projectionValues
 
 process.stdout.write('\nlocalization\n')
 check('dictionaries are key-set identical', JSON.stringify(Object.keys(bundle.DICT.zh).sort()) === JSON.stringify(Object.keys(bundle.DICT.en).sort()), 'zh/en mismatch')

@@ -161,12 +161,12 @@ check('engine and all four DSH peers share a valid compatibility range', () => {
     assert.equal(range, manifest.engines.dsh)
   }
 })
-for (const version of ['0.1.5-rc.1', '0.1.5', '0.1.6-alpha.2', '0.1.6', '0.1.7-rc.2', '0.1.7', '0.1.9', '0.2.0-rc.2', '0.2.0-rc.3', '0.2.0', '0.2.1', '0.2.99']) {
+for (const version of ['0.1.5-rc.1', '0.1.5', '0.1.6-alpha.2', '0.1.6', '0.1.7-rc.2', '0.1.7', '0.1.9', '0.2.0-rc.2', '0.2.0-rc.3', '0.2.0', '0.2.1-alpha.1', '0.2.1-rc.1', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.3', '0.2.2-rc.1', '0.2.2', '0.2.99']) {
   check(`package managers accept supported DSH ${version}`, () => {
     for (const [name, range] of dshRanges) assert.ok(semver.satisfies(version, range), `${name} rejects ${version}`)
   })
 }
-for (const version of ['0.1.4', '0.1.5-rc.0', '0.2.1-rc.1', '0.3.0-alpha.1', '0.3.0-rc.2', '0.3.0', '1.0.0']) {
+for (const version of ['0.1.4', '0.1.5-rc.0', '0.2.3-alpha.1', '0.3.0-alpha.1', '0.3.0-rc.2', '0.3.0', '1.0.0']) {
   check(`package managers reject unqualified DSH ${version}`, () => {
     for (const [name, range] of dshRanges) assert.ok(!semver.satisfies(version, range), `${name} unexpectedly accepts ${version}`)
   })

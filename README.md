@@ -34,7 +34,7 @@ keeps running and unseen chats within reach.
    waiting and ended-but-unseen chats; opening a chat successfully dismisses that phase's reminder. The
    main number is the task total; the badge counts waiting and unseen tasks. Drag
    to remember a position, reset to the index, and leave to close after 200ms. It reuses status subscriptions
-   without polling or loading chat content. Requires `uiSession.sessionStatus` (checked on `0.2.0-rc.2`);
+   without polling or loading chat content. Requires `uiSession.sessionStatus` (checked on `0.2.0-rc.2` and `0.2.2-rc.1`);
    hosts without that capability do not show the tray.
 
 ![The worktree selector on the New Session row, open, showing the current worktree and a new one](docs/images/new-session-worktree-picker.png)
@@ -63,7 +63,7 @@ The tray reuses native status subscriptions: no polling, chat-log loading or ani
 panels do not render rows; open panels show at most 20 rows per page. These choices keep background work
 small, but do not constitute a measured memory benchmark. Reminders reflect the current window's native
 status; they are not a persistent or cross-window notification inbox. Requires `uiSession.sessionStatus`
-(checked on `0.2.0-rc.2`); older hosts without this capability keep the other plugin features.
+(checked on `0.2.0-rc.2` and `0.2.2-rc.1`); older hosts without this capability keep the other plugin features.
 
 The images below render the actual plugin component with **simulated sessions**, rather than a live DSH
 session. The first shows the button and badge; the second shows the expanded task list.
@@ -105,7 +105,7 @@ itself is untouched, and unchecking the box brings every line back.
 ## Install
 
 ```sh
-dsh plugin --profile web add gord-dsh-worktree@0.6.0
+dsh plugin --profile web add gord-dsh-worktree@0.6.1
 ```
 
 Or install from GitHub:
@@ -146,10 +146,17 @@ For a remote hostname or a reverse proxy, configure exact public origins in
 
 ## Across DSH versions
 
-The declared range covers stable 0.1.x releases from `0.1.5` and stable 0.2.x, plus explicit prerelease
-opt-ins for `0.1.5` from `rc.1`, `0.1.6`, `0.1.7` and `0.2.0`, including desktop `0.2.0-rc.2`. Other
-prerelease bases and 0.3.x are excluded. Earlier tested builds include `0.1.5-rc.1`, `0.1.6-alpha.2` and
-`0.1.7-rc.2`; widening metadata does not mean every later build has been fully tested. Glyph export
+Version 0.6.1 runs the full suite with the dependencies bundled in desktop DSH `0.2.2-rc.1` and the
+older local `0.2.0-rc.2`. Tools, Changes, the working-location picker, branch hovers and task labels use
+the effective session directory. Changes made through `working_directory` or native worktrees no longer
+target the original checkout. Older hosts retain the original-directory fallback.
+
+The npm range covers stable 0.1.x releases from `0.1.5` and stable 0.2.x, with explicit prerelease
+opt-ins for `0.1.5` from `rc.1`, `0.1.6`, `0.1.7`, `0.2.0`, `0.2.1` and `0.2.2`. Other prerelease bases
+and 0.3.x remain outside the npm declaration. DSH's own compatibility check includes prereleases and
+therefore differs from npm's default peer rules. Earlier tested builds include `0.1.5-rc.1`,
+`0.1.6-alpha.2` and `0.1.7-rc.2`; declared support does not mean every build was fully tested.
+Glyph export
 names, session navigation and plugin settings changed across the earlier builds, with these fallbacks:
 
 | Interface | 0.1.5 / 0.1.6 | 0.1.7 on | What the plugin does |
